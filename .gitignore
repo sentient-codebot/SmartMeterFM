@@ -1,0 +1,109 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# PyTorch
+*.pth
+*.pt
+.pytorch/
+torch.nn/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+# *.ipynb
+laptop_sample_alliander.ipynb
+
+# Logs and databases
+*.log
+*.sqlite
+wandb/
+lightning_logs/
+checkpoints/
+
+# Distribution / packaging
+.Python
+*.pyc
+*.pyo
+*.pyd
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Environments
+.env
+.venv
+
+# Local data storage
+/data
+
+# Local experimet results
+results
+artifacts
+artifacts/
+generated_data/
+/*.npy
+
+# MLFlow
+mlruns/
+
+# Sagemaker?
+core*
+
+# local test files
+_test*.py
+_norm.png
+norm.png
+y_recon.png
+*.png
+
+uv.lock
+
+# generated samples
+samples/
+
+# processed data
+fast_data/
+
+# experiments
+exp_frechet_sensitivity.py
+/_*.py
+cond_gen_fm_metrics.h5
+trained_models/
