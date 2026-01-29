@@ -1,0 +1,69 @@
+# SmartMeterFM Showcase Configuration
+# Flow Matching model for WPuQ Heat Pump data (public dataset)
+
+exp_id = "showcase_wpuq_flow"
+log_wandb = false
+log_mlflow = false
+
+[data]
+dataset = "wpuq"
+root = "data/wpuq/"
+load = true
+normalize = true
+normalize_method = "meanstd"
+pit = false
+resolution = "15min"  # 96 timesteps per day
+shuffle = true
+vectorize = true
+style_vectorize = "patchify"
+vectorize_window_size = 16  # 16 channels, each with 6 timesteps
+target_labels = ["month"]
+train_season = "whole_year"
+val_season = "whole_year"
+
+[flow]
+prediction_type = "velocity"
+
+[model]
+model_class = "gpt2"
+dim_base = 64
+conditioning = true
+cond_dropout = 0.1
+dropout = 0.1
+num_attn_head = 4
+dim_feedforward = 256
+num_encoder_layer = 0
+num_decoder_layer = 6
+learn_variance = false
+num_in_channel = 16
+seq_length = 6
+freeze_layers = false
+resume = false
+
+[sample]
+num_sample = 1000
+val_batch_size = 256
+num_sampling_step = 100
+method = "euler"
+cfg_scale = 1.0
+
+[train]
+batch_size = 64
+lr = 0.0001
+adam_betas = [0.9, 0.999]
+gradient_accumulate_every = 1
+ema_update_every = 5
+ema_decay = 0.9999
+amp = true
+mixed_precision_type = "bf16"
+split_batches = true
+num_train_step = 50000
+save_and_sample_every = 10000
+val_every = 1000
+val_batch_size = 256
+
+[train.val_sample_config]
+num_sample = 256
+val_batch_size = 256
+num_sampling_step = 50
+cfg_scale = 1.0
