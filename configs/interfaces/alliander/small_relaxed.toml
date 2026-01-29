@@ -1,0 +1,35 @@
+# Example - latest - small
+
+# Model configuration (from model.toml)
+[model]
+model_path = "s3://your_models/checkpoints/last.ckpt"
+s3_bucket_name = "your_bucket"
+devices = ["cuda:0"]
+
+# Conditional configuration (from conditional.toml)
+[conditional]
+cfg_scale = 1.0
+
+# Posterior configuration (from posterior.toml)
+[posterior]
+scale = 1.0
+num_sampling = 5
+project = false
+operator_name = "smooth_max"
+
+[posterior.noise_config]
+name = "gaussian"
+sigma = 0.5
+
+# Sample configuration (from sample.toml)
+[sample]
+use_ema = true
+batch_size = 128
+num_step = 1000
+method = "euler"
+use_sde = false
+device = "cuda"
+data_shape = [186, 16]
+
+[sample.sde_config]
+ode_threshold = 1.0

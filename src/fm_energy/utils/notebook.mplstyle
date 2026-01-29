@@ -1,0 +1,23 @@
+# jupyter notebook optimized style. figures will be smaller to occupy less space
+# Author: Nan Lin
+# Date: 2025-08-06
+
+# figure size in inches
+figure.figsize: 8, 6
+figure.titlesize: 12
+figure.titleweight: bold
+figure.dpi: 300
+figure.autolayout: True
+# axes
+axes.titlesize: 12
+axes.labelsize: 10
+# ticks
+xtick.labelsize: 8
+xtick.minor.visible: True
+ytick.labelsize: 8
+ytick.minor.visible: True
+# cmap
+image.cmap: Blues
+# font
+# font.family: serif
+# font.serif: Times

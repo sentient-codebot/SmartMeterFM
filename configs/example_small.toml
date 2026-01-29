@@ -1,0 +1,68 @@
+# experiment: Alliander Large Customer with month and attribute labels
+exp_id = "1.0.0"
+log_wandb = false
+log_mlflow = true
+
+[data]
+# these are not actively used
+dataset = "your_dataset"
+load = false
+normalize = false
+normalize_method = "meanstd"
+pit = false
+resolution = "1h"
+root = "data/your_dataset/"
+shuffle = true
+style_vectorize = "patchify"
+target_labels = []
+train_season = "whole_year"
+val_season = "whole_year"
+vectorize = true
+vectorize_window_size = 16
+
+[flow]
+prediction_type = "velocity"
+
+[model]
+cond_dropout = 0.1
+conditioning = true
+dim_base = 128
+dim_feedforward = 512
+dropout = 0.1
+freeze_layers = false
+learn_variance = false
+load_milestone = 10
+model_class = "gpt2"
+num_attn_head = 8
+num_decoder_layer = 12
+num_encoder_layer = 0
+num_in_channel = 16
+resume = false
+
+[sample]
+cfg_scale = 1
+num_sample = 4000
+num_sampling_step = 100
+val_batch_size = 512
+
+[train]
+adam_betas = [0.9, 0.999]
+amp = true
+batch_size = 128
+ema_decay = 0.9999
+ema_update_every = 5
+gradient_accumulate_every = 1
+lr = 0.0001
+mixed_precision_type = "fp16"
+num_train_step = 100000
+save_and_sample_every = 50000
+split_batches = true
+val_batch_size = 512
+val_every = 2500
+
+[train.val_sample_config]
+cfg_scale = 1
+dpm_solver_sample = true
+num_sample = 512
+num_sampling_step = 50
+val_batch_size = 512

@@ -1,0 +1,23 @@
+# Standard figure for PES transactions articles, fontsize will be normal/small
+# Author: Nan Lin
+# Date: 2025-08-20
+
+# figure size in inches
+figure.figsize: 3.5, 1.75
+figure.titlesize: 10
+figure.titleweight: normal
+figure.dpi: 300
+figure.constrained_layout.use: True
+# axes
+axes.titlesize: 8
+axes.labelsize: 8
+# ticks
+xtick.labelsize: 6
+xtick.minor.visible: True
+ytick.labelsize: 6
+ytick.minor.visible: True
+# cmap
+image.cmap: Blues
+# font
+font.family: serif
+font.serif: Times New Roman
