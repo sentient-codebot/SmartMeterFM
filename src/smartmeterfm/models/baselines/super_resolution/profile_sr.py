@@ -227,7 +227,7 @@ class ProfileSRBaseline:
         batch_size: int = 32,
         device: str = None,
         use_wandb: bool = False,
-        wandb_project: str = "fm-energy-super-resolution",
+        wandb_project: str = "smartmeterfm-super-resolution",
         wandb_run_name: str = None,
     ):
         """

@@ -1,6 +1,6 @@
 import argparse
 
-from fm_energy.utils.configuration import ExperimentConfig
+from smartmeterfm.utils.configuration import ExperimentConfig
 
 
 def inference_parser() -> ExperimentConfig:

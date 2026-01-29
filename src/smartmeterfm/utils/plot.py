@@ -12,7 +12,7 @@ from matplotlib.ticker import FuncFormatter
 from numpy import ndarray
 
 
-@plt.style.context("fm_energy.utils.article")
+@plt.style.context("smartmeterfm.utils.article")
 def plot_sampled_data_v2(
     samples: dict[str, Float[ndarray, "batch sequence"]],
     save_filepath: str | None = None,
@@ -175,7 +175,7 @@ def plot_time_series_comparison(
         regions = process_mask(mask)
 
     # Apply custom style
-    with plt.style.context("fm_energy.utils.article_compatible"):
+    with plt.style.context("smartmeterfm.utils.article_compatible"):
         # Create figure
         fig = plt.figure(figsize=(15, 10))
         gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1], figure=fig)
@@ -337,7 +337,7 @@ def plot_time_series_comparison_advanced(
         regions = process_mask(mask)
 
     # Apply custom style
-    with plt.style.context("fm_energy.utils.article_compatible"):
+    with plt.style.context("smartmeterfm.utils.article_compatible"):
         # Determine figure size
         _W, _H = plt.rcParams["figure.figsize"]
         rc_diag = (_W**2 + _H**2) ** 0.5

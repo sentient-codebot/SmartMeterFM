@@ -377,7 +377,7 @@ class LoadPINBaseline(NNImputeBaseline):
         batch_size: int = 32,
         device: str | None = None,
         use_wandb: bool = False,
-        wandb_project: str = "fm-energy-imputation",
+        wandb_project: str = "smartmeterfm-imputation",
         wandb_run_name: str | None = None,
         noise_std: float = 0.1,
     ):

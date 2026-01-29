@@ -1,5 +1,5 @@
 [project]
-name = "fm-energy"
+name = "smartmeterfm"
 version = "0.1.0"
 description = "flow matching for energy time series data"
 readme = "readme.md"
@@ -75,7 +75,7 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.ruff.lint.isort]
-known-first-party = ["fm_energy"]
+known-first-party = ["smartmeterfm"]
 force-single-line = false
 lines-after-imports = 2
 

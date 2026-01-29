@@ -9,7 +9,7 @@ import torch
 from einops import rearrange
 from tqdm import tqdm
 
-from fm_energy.data_modules.utils import (
+from smartmeterfm.data_modules.utils import (
     DatasetWithMetadata,
     StaticLabelContainer,
     TimeSeriesDataCollection,

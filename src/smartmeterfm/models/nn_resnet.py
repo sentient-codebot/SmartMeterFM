@@ -10,7 +10,7 @@ from einops.layers.torch import Rearrange
 from jaxtyping import Float
 from torch import Tensor, nn
 
-from fm_energy.models.nn_components import (
+from smartmeterfm.models.nn_components import (
     EmbedderWrapper,
     LearnedSinusoidalPosEmb,
     RandomSinusoidalPosEmb,
