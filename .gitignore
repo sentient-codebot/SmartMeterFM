@@ -41,7 +41,7 @@ torch.nn/
 # Jupyter Notebook
 .ipynb_checkpoints
 # *.ipynb
-laptop_sample_alliander.ipynb
+
 
 # Logs and databases
 *.log
