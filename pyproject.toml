@@ -93,6 +93,6 @@ dev = [
     "pandas>=2.2.3",
     "pytest>=8.3.4",
     "scikit-learn>=1.6.1",
-    "numba==0.61",
-    "umap-learn>=0.5.7",
+    # "numba==0.61",
+    # "umap-learn>=0.5.7",
 ]
