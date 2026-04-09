@@ -1,0 +1,24 @@
+line-length = 88  # Same as black
+target-version = "py313"
+lint.extend-select = [
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+lint.extend-ignore = ["F722", "F821", "E731"]
+fix = true
+
+# Ignore files in .gitignore
+respect-gitignore = true
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[lint.isort]
+known-first-party = ["fm_energy"]
+force-single-line = false
+lines-after-imports = 2
