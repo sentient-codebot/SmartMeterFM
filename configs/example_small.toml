@@ -1,4 +1,4 @@
-# experiment: Alliander Large Customer with month and attribute labels
+# example: Flow Matching training config
 exp_id = "1.0.0"
 log_wandb = false
 log_mlflow = true
