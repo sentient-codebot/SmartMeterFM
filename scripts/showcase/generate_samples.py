@@ -76,14 +76,19 @@ def generate_flow_samples(
 
             # Create condition tensor
             condition = {
-                "month": torch.full((curr_batch_size, 1), month, dtype=torch.long, device=device)
+                "month": torch.full(
+                    (curr_batch_size, 1), month, dtype=torch.long, device=device
+                )
             }
 
             # Generate samples
             with torch.no_grad():
                 # Get sample shape from model
-                sample_shape = (curr_batch_size, model.hparams.get("seq_length", 6),
-                              model.hparams.get("num_in_channel", 16))
+                sample_shape = (
+                    curr_batch_size,
+                    model.hparams.get("seq_length", 6),
+                    model.hparams.get("num_in_channel", 16),
+                )
 
                 # Sample from prior
                 x_0 = torch.randn(sample_shape, device=device)
@@ -109,7 +114,9 @@ def generate_flow_samples(
                 all_samples.append(x_1.cpu())
 
         samples_by_month[month] = torch.cat(all_samples, dim=0)
-        print(f"Generated {samples_by_month[month].shape[0]} samples for month {month + 1}")
+        print(
+            f"Generated {samples_by_month[month].shape[0]} samples for month {month + 1}"
+        )
 
     return samples_by_month
 
@@ -155,7 +162,9 @@ def generate_vae_samples(
 
             # Create condition tensor
             condition = {
-                "month": torch.full((curr_batch_size, 1), month, dtype=torch.long, device=device)
+                "month": torch.full(
+                    (curr_batch_size, 1), month, dtype=torch.long, device=device
+                )
             }
 
             with torch.no_grad():
@@ -164,13 +173,17 @@ def generate_vae_samples(
                     x = model.sample(condition=condition, num_samples=curr_batch_size)
                 else:
                     # Manual sampling from prior
-                    z = torch.randn(curr_batch_size, model.vae.latent_dim, device=device)
+                    z = torch.randn(
+                        curr_batch_size, model.vae.latent_dim, device=device
+                    )
                     x = model.vae.decode(z, condition)
 
                 all_samples.append(x.cpu())
 
         samples_by_month[month] = torch.cat(all_samples, dim=0)
-        print(f"Generated {samples_by_month[month].shape[0]} samples for month {month + 1}")
+        print(
+            f"Generated {samples_by_month[month].shape[0]} samples for month {month + 1}"
+        )
 
     return samples_by_month
 
@@ -201,7 +214,9 @@ def save_samples(samples_by_month: dict[int, torch.Tensor], output_dir: str):
         f.write("=" * 40 + "\n\n")
         total_samples = 0
         for month, samples in sorted(samples_by_month.items()):
-            f.write(f"Month {month + 1:2d}: {samples.shape[0]:6d} samples, shape: {list(samples.shape)}\n")
+            f.write(
+                f"Month {month + 1:2d}: {samples.shape[0]:6d} samples, shape: {list(samples.shape)}\n"
+            )
             total_samples += samples.shape[0]
         f.write(f"\nTotal samples: {total_samples}\n")
 

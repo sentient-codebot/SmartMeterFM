@@ -11,6 +11,7 @@ from einops import rearrange, reduce
 from jaxtyping import Float
 from torch import Tensor
 
+
 # Operators
 __OPERATOR__ = {}
 
@@ -188,8 +189,10 @@ class AverageOperator(LinearOperator):
         # Calculate A @ x
         flat_data = data.flatten(start_dim=1)
         if flat_data.shape[1] != self.sequence_length:
-            raise ValueError(f"Flattened data must have shape \
-                [batch, {self.sequence_length}], but got {flat_data.shape}")
+            raise ValueError(
+                f"Flattened data must have shape \
+                [batch, {self.sequence_length}], but got {flat_data.shape}"
+            )
         mean = reduce(flat_data, "b L -> b ()", "mean")
         return mean
 
@@ -199,8 +202,10 @@ class AverageOperator(LinearOperator):
         # Calculate A^+ @ y, pseudo inverse of A
         # transpose(forward(x)) = A^+ @ A @ x = range component of x
         if measurement.dim() != 2:
-            raise ValueError(f"Input measurement must have shape \
-                [batch 1], but got {measurement.shape}")
+            raise ValueError(
+                f"Input measurement must have shape \
+                [batch 1], but got {measurement.shape}"
+            )
         pseudo_data = measurement.expand(-1, self.sequence_length)
         # shape [batch, sequence]
         return pseudo_data
@@ -236,8 +241,10 @@ class InpaintingOperator(LinearOperator):
             Masked data with missing values set to 0
         """
         if data.shape[1] != self.sequence_length or len(data.shape) != 2:
-            raise ValueError(f"Input data must have shape \
-                [batch, {self.sequence_length}], but got {data.shape}")
+            raise ValueError(
+                f"Input data must have shape \
+                [batch, {self.sequence_length}], but got {data.shape}"
+            )
 
         # Expand mask to match batch size if needed
         if self.mask.shape[0] == 1 and data.shape[0] > 1:
@@ -259,8 +266,10 @@ class InpaintingOperator(LinearOperator):
             Tensor with observed values at their original positions
         """
         if measurement.shape[1] != self.sequence_length or len(measurement.shape) != 2:
-            raise ValueError(f"Input measurement must have shape \
-                [batch, {self.sequence_length}], but got {measurement.shape}")
+            raise ValueError(
+                f"Input measurement must have shape \
+                [batch, {self.sequence_length}], but got {measurement.shape}"
+            )
 
         # Expand mask to match batch size if needed
         if self.mask.shape[0] == 1 and measurement.shape[0] > 1:
@@ -631,8 +640,10 @@ class Noise(ABC):
         if measurement.shape == ref_tensor.shape[1:]:
             return measurement.unsqueeze(0)
 
-        raise ValueError(f"Measurement shape {measurement.shape} \
-                does not match pseudo measurement shape {ref_tensor.shape}.")
+        raise ValueError(
+            f"Measurement shape {measurement.shape} \
+                does not match pseudo measurement shape {ref_tensor.shape}."
+        )
 
     @abstractmethod
     def log_likelihood(

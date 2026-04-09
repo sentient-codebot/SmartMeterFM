@@ -300,7 +300,8 @@ class Decoder(nn.Module):
                 self.deconv_layers,
                 self.bn_layers,
                 self.adaLN_modulations,
-                self.residual_blocks, strict=False,
+                self.residual_blocks,
+                strict=False,
             )
         ):
             # Deconv layer
@@ -569,7 +570,7 @@ class VAEModelPL(pl.LightningModule):
         params = list(self.vae.parameters())
         if self.label_embedder is not None:
             params.extend(self.label_embedder.parameters())
-        
+
         optimizer = torch.optim.AdamW(
             params,
             lr=self.train_config.lr,

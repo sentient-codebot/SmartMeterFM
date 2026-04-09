@@ -12,8 +12,8 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from ..nn_components import IntegerEmbedder
 from ._registry import register_embedder
-from ..nn_components import CombinedEmbedder, IntegerEmbedder
 
 
 @register_embedder("wpuq_month")
@@ -127,12 +127,16 @@ class WPuQMonthSeasonEmbedder(nn.Module):
         if month.dim() == 2:
             month = month.squeeze(-1)
 
-        month_emb = self.month_embedder(month, train=train, force_drop_ids=force_drop_ids)
+        month_emb = self.month_embedder(
+            month, train=train, force_drop_ids=force_drop_ids
+        )
 
         if self.use_season:
             # Derive season from month
             season = self.month_to_season[month]
-            season_emb = self.season_embedder(season, train=train, force_drop_ids=force_drop_ids)
+            season_emb = self.season_embedder(
+                season, train=train, force_drop_ids=force_drop_ids
+            )
             return torch.cat([month_emb, season_emb], dim=-1)
 
         return month_emb
@@ -242,7 +246,9 @@ class WPuQFullEmbedder(nn.Module):
                 # Derive from month
                 season = self.month_to_season[month]
             embeddings.append(
-                self.embedders["season"](season, train=train, force_drop_ids=force_drop_ids)
+                self.embedders["season"](
+                    season, train=train, force_drop_ids=force_drop_ids
+                )
             )
 
         # Day type (optional)
@@ -251,7 +257,9 @@ class WPuQFullEmbedder(nn.Module):
             if day_type.dim() == 2:
                 day_type = day_type.squeeze(-1)
             embeddings.append(
-                self.embedders["day_type"](day_type, train=train, force_drop_ids=force_drop_ids)
+                self.embedders["day_type"](
+                    day_type, train=train, force_drop_ids=force_drop_ids
+                )
             )
 
         # Household ID (optional)
@@ -260,7 +268,9 @@ class WPuQFullEmbedder(nn.Module):
             if hh_id.dim() == 2:
                 hh_id = hh_id.squeeze(-1)
             embeddings.append(
-                self.embedders["household_id"](hh_id, train=train, force_drop_ids=force_drop_ids)
+                self.embedders["household_id"](
+                    hh_id, train=train, force_drop_ids=force_drop_ids
+                )
             )
 
         return torch.cat(embeddings, dim=-1)

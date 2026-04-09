@@ -467,9 +467,9 @@ class EmbedderWrapper(nn.Module):
         list_dim_cond: Sequence[int],
     ):
         super().__init__()
-        assert len(list_embedder) == len(
-            list_dim_cond
-        ), "embedder_list and dim_list must have same length"
+        assert len(list_embedder) == len(list_dim_cond), (
+            "embedder_list and dim_list must have same length"
+        )
         self.list_embedder = (
             nn.ModuleList(list_embedder)
             if not isinstance(list_embedder, nn.ModuleList)

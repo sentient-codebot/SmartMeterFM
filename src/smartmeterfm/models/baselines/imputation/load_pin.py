@@ -495,9 +495,9 @@ class LoadPINBaseline(NNImputeBaseline):
         Returns:
             Feature matching loss value.
         """
-        assert len(features_gen) == len(
-            features_real
-        ), "Feature lists must have the same length."
+        assert len(features_gen) == len(features_real), (
+            "Feature lists must have the same length."
+        )
         loss = 0.0
         for f_gen, f_real in zip(features_gen, features_real, strict=True):
             loss += torch.sqrt(F.mse_loss(f_gen, f_real)).mean()

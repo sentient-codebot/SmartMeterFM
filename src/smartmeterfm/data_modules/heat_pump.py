@@ -413,8 +413,10 @@ class WPuQ(TimeSeriesDataCollection):
 
         # pit
         pit = None
-        assert not self.process_option["pit_transform"], "Not implemented. Deprecated.\
+        assert not self.process_option["pit_transform"], (
+            "Not implemented. Deprecated.\
             Advised to use PIT in the PL model or PL data module."
+        )
 
         # shuffle
         pass  # already shuffled in pre-processing

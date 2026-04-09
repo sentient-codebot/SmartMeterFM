@@ -30,7 +30,9 @@ from smartmeterfm.models.measurement import get_operator
 from smartmeterfm.utils.configuration import DataConfig
 
 
-def generate_mcar_mask(length: int, missing_rate: float, seed: int = None) -> torch.Tensor:
+def generate_mcar_mask(
+    length: int, missing_rate: float, seed: int = None
+) -> torch.Tensor:
     """Generate Missing Completely At Random (MCAR) mask.
 
     Args:
@@ -189,10 +191,12 @@ def evaluate_imputation(
     # Calculate metrics
     mse = ((original_missing - mean_imputed_missing) ** 2).mean().item()
     mae = (original_missing - mean_imputed_missing).abs().mean().item()
-    rmse = mse ** 0.5
+    rmse = mse**0.5
 
     # Uncertainty (std of imputed values at missing positions)
-    imputed_at_missing = imputed[:, missing_mask.expand_as(imputed[0])].view(imputed.shape[0], -1)
+    imputed_at_missing = imputed[:, missing_mask.expand_as(imputed[0])].view(
+        imputed.shape[0], -1
+    )
     uncertainty = imputed_at_missing.std(dim=0).mean().item()
 
     return {
@@ -287,6 +291,7 @@ def main():
     # Load model
     print(f"\nLoading model from {args.checkpoint}...")
     from smartmeterfm.models.flow import FlowModelPL
+
     model = FlowModelPL.load_from_checkpoint(args.checkpoint, map_location=args.device)
 
     # Load test data
@@ -309,7 +314,7 @@ def main():
     )
     wpuq_data = WPuQ(data_config)
 
-    test_profiles = wpuq_data.dataset.profile["test"][:args.num_test_series]
+    test_profiles = wpuq_data.dataset.profile["test"][: args.num_test_series]
     test_labels = wpuq_data.dataset.label["test"]
 
     # Run imputation
@@ -323,10 +328,15 @@ def main():
         # Generate mask
         flat_length = original.numel()
         if args.imputation_type == "mcar":
-            mask = generate_mcar_mask(flat_length, args.missing_rate, seed=args.seed + idx)
+            mask = generate_mcar_mask(
+                flat_length, args.missing_rate, seed=args.seed + idx
+            )
         else:
             mask = generate_mnar_consecutive_mask(
-                flat_length, args.missing_rate, args.min_block_size, seed=args.seed + idx
+                flat_length,
+                args.missing_rate,
+                args.min_block_size,
+                seed=args.seed + idx,
             )
 
         # Create observed data (with missing values set to 0)
@@ -367,11 +377,14 @@ def main():
     # Save results
     os.makedirs(args.output_dir, exist_ok=True)
     results_path = os.path.join(args.output_dir, "imputation_results.pt")
-    torch.save({
-        "metrics": all_metrics,
-        "avg_metrics": avg_metrics,
-        "args": vars(args),
-    }, results_path)
+    torch.save(
+        {
+            "metrics": all_metrics,
+            "avg_metrics": avg_metrics,
+            "args": vars(args),
+        },
+        results_path,
+    )
 
     # Print summary
     print("\n" + "=" * 50)

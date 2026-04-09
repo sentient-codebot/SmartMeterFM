@@ -245,7 +245,7 @@ class TemporalCNNBaseline:
             num_batches = 0
 
             for batch_low, batch_high in tqdm(
-                dataloader, desc=f"Epoch {epoch+1}/{self.epochs}", leave=False
+                dataloader, desc=f"Epoch {epoch + 1}/{self.epochs}", leave=False
             ):
                 batch_low = batch_low.to(self.device)
                 batch_high = batch_high.to(self.device)
@@ -268,7 +268,7 @@ class TemporalCNNBaseline:
             if (epoch + 1) % 20 == 0:
                 avg_loss = total_loss / num_batches
                 print(
-                    f"TemporalCNN (scale={scale_factor}) Epoch {epoch+1}/{self.epochs}, Loss: {avg_loss:.4f}"
+                    f"TemporalCNN (scale={scale_factor}) Epoch {epoch + 1}/{self.epochs}, Loss: {avg_loss:.4f}"
                 )
 
         self.is_fitted[scale_factor] = True

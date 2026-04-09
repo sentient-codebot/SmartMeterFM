@@ -78,7 +78,9 @@ def upsample_linear(data: torch.Tensor, scale_factor: int) -> torch.Tensor:
     data = data.permute(0, 2, 1)
 
     # Linear interpolation
-    data_hr = F.interpolate(data, scale_factor=scale_factor, mode="linear", align_corners=False)
+    data_hr = F.interpolate(
+        data, scale_factor=scale_factor, mode="linear", align_corners=False
+    )
 
     # [batch, channels, seq_len_hr] -> [batch, seq_len_hr, channels]
     data_hr = data_hr.permute(0, 2, 1)
@@ -188,14 +190,16 @@ def evaluate_super_resolution(
     mae_baseline = (original_hr - baseline_hr).abs().mean().item()
 
     # RMSE
-    rmse_sr = mse_sr ** 0.5
-    rmse_baseline = mse_baseline ** 0.5
+    rmse_sr = mse_sr**0.5
+    rmse_baseline = mse_baseline**0.5
 
     # Uncertainty
     uncertainty = sr_samples.std(dim=0).mean().item()
 
     # Improvement over baseline
-    improvement_mse = (mse_baseline - mse_sr) / mse_baseline * 100 if mse_baseline > 0 else 0
+    improvement_mse = (
+        (mse_baseline - mse_sr) / mse_baseline * 100 if mse_baseline > 0 else 0
+    )
 
     return {
         "mse_sr": mse_sr,
@@ -278,6 +282,7 @@ def main():
     # Load model
     print(f"\nLoading model from {args.checkpoint}...")
     from smartmeterfm.models.flow import FlowModelPL
+
     model = FlowModelPL.load_from_checkpoint(args.checkpoint, map_location=args.device)
 
     # Load test data
@@ -300,13 +305,15 @@ def main():
     )
     wpuq_data = WPuQ(data_config)
 
-    test_profiles = wpuq_data.dataset.profile["test"][:args.num_test_series]
+    test_profiles = wpuq_data.dataset.profile["test"][: args.num_test_series]
     test_labels = wpuq_data.dataset.label["test"]
 
     # Run super-resolution
     all_metrics = []
 
-    print(f"\nRunning {args.scale_factor}x super-resolution on {len(test_profiles)} time series...")
+    print(
+        f"\nRunning {args.scale_factor}x super-resolution on {len(test_profiles)} time series..."
+    )
     for idx in tqdm(range(len(test_profiles)), desc="Super-resolving"):
         original_hr = test_profiles[idx]  # [seq_len, channels]
         month = test_labels["month"][idx].item()
@@ -342,18 +349,29 @@ def main():
     # Aggregate results
     avg_metrics = {
         key: sum(m[key] for m in all_metrics) / len(all_metrics)
-        for key in ["mse_sr", "mse_baseline", "mae_sr", "mae_baseline",
-                    "rmse_sr", "rmse_baseline", "uncertainty", "improvement_mse_pct"]
+        for key in [
+            "mse_sr",
+            "mse_baseline",
+            "mae_sr",
+            "mae_baseline",
+            "rmse_sr",
+            "rmse_baseline",
+            "uncertainty",
+            "improvement_mse_pct",
+        ]
     }
 
     # Save results
     os.makedirs(args.output_dir, exist_ok=True)
     results_path = os.path.join(args.output_dir, f"sr_{args.scale_factor}x_results.pt")
-    torch.save({
-        "metrics": all_metrics,
-        "avg_metrics": avg_metrics,
-        "args": vars(args),
-    }, results_path)
+    torch.save(
+        {
+            "metrics": all_metrics,
+            "avg_metrics": avg_metrics,
+            "args": vars(args),
+        },
+        results_path,
+    )
 
     # Print summary
     print("\n" + "=" * 60)
@@ -364,9 +382,15 @@ def main():
     print("-" * 60)
     print(f"{'Metric':<25} {'Flow SR':<15} {'Baseline':<15}")
     print("-" * 60)
-    print(f"{'MSE':<25} {avg_metrics['mse_sr']:<15.6f} {avg_metrics['mse_baseline']:<15.6f}")
-    print(f"{'MAE':<25} {avg_metrics['mae_sr']:<15.6f} {avg_metrics['mae_baseline']:<15.6f}")
-    print(f"{'RMSE':<25} {avg_metrics['rmse_sr']:<15.6f} {avg_metrics['rmse_baseline']:<15.6f}")
+    print(
+        f"{'MSE':<25} {avg_metrics['mse_sr']:<15.6f} {avg_metrics['mse_baseline']:<15.6f}"
+    )
+    print(
+        f"{'MAE':<25} {avg_metrics['mae_sr']:<15.6f} {avg_metrics['mae_baseline']:<15.6f}"
+    )
+    print(
+        f"{'RMSE':<25} {avg_metrics['rmse_sr']:<15.6f} {avg_metrics['rmse_baseline']:<15.6f}"
+    )
     print("-" * 60)
     print(f"Uncertainty: {avg_metrics['uncertainty']:.6f}")
     print(f"Improvement over baseline: {avg_metrics['improvement_mse_pct']:.1f}% (MSE)")

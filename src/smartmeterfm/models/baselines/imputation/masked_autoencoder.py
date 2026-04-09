@@ -449,7 +449,7 @@ class MaskedAutoencoderBaseline(NNImputeBaseline):
             num_batches = 0
 
             pbar_batch = tqdm(
-                dataloader, desc=f"Epoch {epoch+1}/{self.epochs}", leave=False
+                dataloader, desc=f"Epoch {epoch + 1}/{self.epochs}", leave=False
             )
             for batch_data, batch_masks in pbar_batch:
                 batch_data = batch_data.to(self.device)
@@ -502,7 +502,7 @@ class MaskedAutoencoderBaseline(NNImputeBaseline):
                     )
 
             if (epoch + 1) % 20 == 0:
-                print(f"MAE Epoch {epoch+1}/{self.epochs}, Loss: {avg_loss:.4f}")
+                print(f"MAE Epoch {epoch + 1}/{self.epochs}, Loss: {avg_loss:.4f}")
 
         self.is_fitted = True
 

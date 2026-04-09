@@ -35,7 +35,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.models.flow import FlowModelPL
 from smartmeterfm.utils.configuration import (
-    DataConfig,
     ExperimentConfig,
     IntegerEmbedderArgs,
     save_config,
@@ -68,7 +67,9 @@ def setup_torch_optimizations():
     torch.set_float32_matmul_precision("high")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    warnings.filterwarnings("ignore", category=FutureWarning, module="torch.distributed.*")
+    warnings.filterwarnings(
+        "ignore", category=FutureWarning, module="torch.distributed.*"
+    )
 
 
 def count_parameters(model):
@@ -104,7 +105,9 @@ def calculate_batch_sizes(args, config, num_gpus):
         effective_batch_size = local_batch_size * num_gpus
 
         if args.maintain_batch_size:
-            accumulate_grad_batches = math.ceil(global_batch_size / effective_batch_size)
+            accumulate_grad_batches = math.ceil(
+                global_batch_size / effective_batch_size
+            )
             effective_batch_size = local_batch_size * num_gpus * accumulate_grad_batches
         else:
             accumulate_grad_batches = config.train.gradient_accumulate_every
@@ -172,7 +175,9 @@ def setup_data_module(config: ExperimentConfig):
 
     sample_shape = train_profiles.shape[1:]  # [seq_len, channels]
     logging.info(f"Data module setup complete. Sample shape: {sample_shape}")
-    logging.info(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
+    logging.info(
+        f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}"
+    )
 
     return train_loader, val_loader, sample_shape
 
@@ -267,6 +272,7 @@ def setup_trainer(args, config, num_gpus, accumulate_grad_batches):
     if config.log_wandb:
         try:
             from pytorch_lightning.loggers import WandbLogger
+
             wandb_logger = WandbLogger(
                 project="smartmeterfm-showcase",
                 name=config.time_id,
@@ -369,8 +375,8 @@ def main():
         logging.warning("No GPUs available, falling back to CPU")
 
     # Calculate batch sizes
-    local_batch_size, accumulate_grad_batches, effective_batch_size = calculate_batch_sizes(
-        args, config, max(num_gpus, 1)
+    local_batch_size, accumulate_grad_batches, effective_batch_size = (
+        calculate_batch_sizes(args, config, max(num_gpus, 1))
     )
     config.train.batch_size = local_batch_size
 
@@ -402,7 +408,9 @@ def main():
     if trainer.is_global_zero:
         os.makedirs("results/configs", exist_ok=True)
         save_config(config, args.time_id)
-        logging.info(f"Saved configuration to results/configs/exp_config_{args.time_id}.yaml")
+        logging.info(
+            f"Saved configuration to results/configs/exp_config_{args.time_id}.yaml"
+        )
         logging.info(f"Flow baseline experiment starts: {run_id}")
 
     # Start training

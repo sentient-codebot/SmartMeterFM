@@ -78,5 +78,5 @@ class GlobalProgressBar(TQDMProgressBar):
         super().on_train_epoch_end(trainer, pl_module)
         # Update the description to show both epoch and global progress
         self.train_progress_bar.set_description(
-            f"Epoch {trainer.current_epoch}/{trainer.max_epochs-1}"
+            f"Epoch {trainer.current_epoch}/{trainer.max_epochs - 1}"
         )
