@@ -232,9 +232,9 @@ def main():
     parser.add_argument(
         "--scale_factor",
         type=int,
-        choices=[2, 4, 8],
-        default=4,
-        help="Upsampling factor (default: 4)",
+        choices=[2, 3, 4, 6, 8],
+        default=2,
+        help="Upsampling factor (default: 2). Must evenly divide the sequence length.",
     )
     parser.add_argument(
         "--num_samples",
@@ -283,7 +283,9 @@ def main():
     print(f"\nLoading model from {args.checkpoint}...")
     from smartmeterfm.models.flow import FlowModelPL
 
-    model = FlowModelPL.load_from_checkpoint(args.checkpoint, map_location=args.device)
+    model = FlowModelPL.load_from_checkpoint(
+        args.checkpoint, map_location=args.device, weights_only=False
+    )
 
     # Load test data
     print("\nLoading WPuQ test data...")

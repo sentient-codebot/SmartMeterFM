@@ -12,12 +12,12 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from ..nn_components import IntegerEmbedder
+from ..nn_components import CombinedEmbedder, IntegerEmbedder
 from ._registry import register_embedder
 
 
 @register_embedder("wpuq_month")
-class WPuQMonthEmbedder(nn.Module):
+class WPuQMonthEmbedder(CombinedEmbedder):
     """Simple month-based embedder for WPuQ data.
 
     Embeds month information (0-11) for conditional generation.
@@ -29,40 +29,9 @@ class WPuQMonthEmbedder(nn.Module):
     """
 
     def __init__(self, month: dict[str, Any]):
-        super().__init__()
-
-        # Set default num_embedding for months if not provided
         if "num_embedding" not in month:
             month["num_embedding"] = 12
-
-        self.month_embedder = IntegerEmbedder(**month)
-        self.dim_out = month["dim_embedding"]
-
-    def forward(
-        self,
-        y: dict[str, torch.Tensor],
-        train: bool | None = None,
-        force_drop_ids: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Embed month condition.
-
-        Args:
-            y: Dictionary containing 'month' tensor of shape [batch, 1] or [batch]
-            train: Whether in training mode (for dropout). None uses self.training
-            force_drop_ids: Force dropout for specific samples
-
-        Returns:
-            Embedded condition of shape [batch, dim_embedding]
-        """
-        month = y["month"]
-        if month.dim() == 2:
-            month = month.squeeze(-1)
-
-        return self.month_embedder(month, train=train, force_drop_ids=force_drop_ids)
-
-    @property
-    def output_dim(self) -> int:
-        return self.dim_out
+        super().__init__({"month": IntegerEmbedder(**month)})
 
 
 @register_embedder("wpuq_month_season")

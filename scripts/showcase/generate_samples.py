@@ -51,7 +51,9 @@ def generate_flow_samples(
     from smartmeterfm.models.flow import FlowModelPL
 
     print(f"Loading Flow model from {checkpoint_path}...")
-    model = FlowModelPL.load_from_checkpoint(checkpoint_path, map_location=device)
+    model = FlowModelPL.load_from_checkpoint(
+        checkpoint_path, map_location=device, weights_only=False
+    )
     model.eval()
     model.to(device)
 
@@ -143,7 +145,9 @@ def generate_vae_samples(
     from smartmeterfm.models.baselines.cond_gen.vae import VAEModelPL
 
     print(f"Loading VAE model from {checkpoint_path}...")
-    model = VAEModelPL.load_from_checkpoint(checkpoint_path, map_location=device)
+    model = VAEModelPL.load_from_checkpoint(
+        checkpoint_path, map_location=device, weights_only=False
+    )
     model.eval()
     model.to(device)
 

@@ -237,10 +237,7 @@ def register_label_transform(label_transform_method):
 
 
 class DatasetCollection(ABC):
-    @property
-    @abstractmethod
-    def dataset(self) -> DatasetWithMetadata:
-        pass
+    dataset: DatasetWithMetadata | None = None
 
 
 class TimeSeriesDataCollection(DatasetCollection):

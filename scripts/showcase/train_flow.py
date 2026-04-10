@@ -53,6 +53,13 @@ from smartmeterfm.utils.eval import (
 )
 
 
+def dict_collate_fn(batch):
+    """Collate function that wraps condition tensor into a dict for the model."""
+    profiles = torch.stack([b[0] for b in batch])
+    months = torch.stack([b[1] for b in batch])
+    return profiles, {"month": months}
+
+
 def setup_logging(run_id: str, level: int = logging.INFO):
     """Set up logging configuration."""
     logging.basicConfig(
@@ -164,6 +171,7 @@ def setup_data_module(config: ExperimentConfig):
         num_workers=4,
         pin_memory=True,
         drop_last=True,
+        collate_fn=dict_collate_fn,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -171,6 +179,7 @@ def setup_data_module(config: ExperimentConfig):
         shuffle=False,
         num_workers=4,
         pin_memory=True,
+        collate_fn=dict_collate_fn,
     )
 
     sample_shape = train_profiles.shape[1:]  # [seq_len, channels]
@@ -242,11 +251,11 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
     return pl_flow
 
 
-def setup_trainer(args, config, num_gpus, accumulate_grad_batches):
+def setup_trainer(args, config, num_gpus, accumulate_grad_batches, use_mps=False):
     """Set up the PyTorch Lightning trainer."""
     # Set up DDP strategy
     ddp_strategy = "auto"
-    if num_gpus > 1:
+    if num_gpus > 1 and not use_mps:
         ddp_strategy = DDPStrategy(
             find_unused_parameters=False,
             static_graph=True,
@@ -282,6 +291,20 @@ def setup_trainer(args, config, num_gpus, accumulate_grad_batches):
         except ImportError:
             logging.warning("wandb not installed, skipping wandb logging")
 
+    # Determine accelerator and precision
+    if use_mps:
+        accelerator = "mps"
+        devices = 1
+        precision = "32-true"  # MPS doesn't support bf16-mixed
+    elif num_gpus > 0:
+        accelerator = "gpu"
+        devices = num_gpus
+        precision = "bf16-mixed"
+    else:
+        accelerator = "cpu"
+        devices = "auto"
+        precision = "bf16-mixed"
+
     # Create trainer
     trainer = pl.Trainer(
         gradient_clip_val=1.0,
@@ -290,10 +313,10 @@ def setup_trainer(args, config, num_gpus, accumulate_grad_batches):
         logger=loggers if loggers else None,
         val_check_interval=config.train.val_every,
         check_val_every_n_epoch=None,
-        accelerator="gpu" if num_gpus > 0 else "cpu",
-        devices=num_gpus if num_gpus > 0 else "auto",
+        accelerator=accelerator,
+        devices=devices,
         strategy=ddp_strategy,
-        precision="bf16-mixed",
+        precision=precision,
         accumulate_grad_batches=accumulate_grad_batches,
         callbacks=callbacks,
         enable_progress_bar=True,
@@ -369,9 +392,14 @@ def main():
     run_id = f"train-flow-{args.time_id}"
     setup_logging(run_id=run_id, level=logging.INFO)
 
-    # Calculate available GPUs
+    # Calculate available GPUs / accelerator
     num_gpus = min(args.num_gpus, torch.cuda.device_count())
-    if num_gpus == 0:
+    use_mps = False
+    if num_gpus == 0 and torch.backends.mps.is_available():
+        use_mps = True
+        num_gpus = 1  # treat MPS as a single device for batch size calculation
+        logging.info("Using MPS (Apple Silicon) accelerator")
+    elif num_gpus == 0:
         logging.warning("No GPUs available, falling back to CPU")
 
     # Calculate batch sizes
@@ -402,7 +430,7 @@ def main():
             logging.warning(f"Checkpoint not found: {args.resume_ckpt}")
 
     # Set up trainer
-    trainer = setup_trainer(args, config, num_gpus, accumulate_grad_batches)
+    trainer = setup_trainer(args, config, num_gpus, accumulate_grad_batches, use_mps=use_mps)
 
     # Save configuration
     if trainer.is_global_zero:

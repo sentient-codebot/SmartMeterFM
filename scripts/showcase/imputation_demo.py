@@ -26,7 +26,6 @@ import torch
 from tqdm import tqdm
 
 from smartmeterfm.data_modules.heat_pump import WPuQ
-from smartmeterfm.models.measurement import get_operator
 from smartmeterfm.utils.configuration import DataConfig
 
 
@@ -122,12 +121,6 @@ def impute_with_flow(
     """
     model.eval()
     model.to(device)
-
-    # Get the inpainting operator
-    inpainting_op = get_operator(name="inpainting", mask=mask.tolist())
-
-    # Create measurement (observed values)
-    measurement = inpainting_op.forward(observed_data.flatten().unsqueeze(0))
 
     all_imputed = []
 
@@ -292,7 +285,9 @@ def main():
     print(f"\nLoading model from {args.checkpoint}...")
     from smartmeterfm.models.flow import FlowModelPL
 
-    model = FlowModelPL.load_from_checkpoint(args.checkpoint, map_location=args.device)
+    model = FlowModelPL.load_from_checkpoint(
+        args.checkpoint, map_location=args.device, weights_only=False
+    )
 
     # Load test data
     print("\nLoading WPuQ test data...")
