@@ -33,6 +33,7 @@ from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import DataLoader, TensorDataset
 
 from smartmeterfm.data_modules.heat_pump import WPuQ
+from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.models.flow import FlowModelPL
 from smartmeterfm.utils.configuration import (
     ExperimentConfig,
@@ -140,11 +141,15 @@ def setup_data_module(config: ExperimentConfig):
     Returns:
         Tuple of (train_dataloader, val_dataloader, sample_shape)
     """
-    logging.info("Setting up WPuQ Heat Pump data module...")
-
-    # Load WPuQ dataset
     data_config = config.data
-    wpuq_data = WPuQ(data_config)
+    dataset_name = getattr(data_config, "dataset", "wpuq")
+
+    if dataset_name == "wpuq_household":
+        logging.info("Setting up WPuQ Household data module...")
+        wpuq_data = WPuQHousehold(data_config)
+    else:
+        logging.info("Setting up WPuQ Heat Pump data module...")
+        wpuq_data = WPuQ(data_config)
 
     # Get train and validation data
     train_profiles = wpuq_data.dataset.profile["train"]  # [N, seq_len, channels]
