@@ -1,5 +1,51 @@
 """
 WPuQ Household Electricity Consumption (all households, monthly segmentation)
+
+Dataset
+-------
+Source: WPuQ (Wärmepumpen-Umfeldquartier) dataset from Germany.
+HDF5 path: ``{NO_PV,WITH_PV}/{SFH*}/HOUSEHOLD/table`` in ``{year}_data_1min.hdf5``.
+Houses: ~38 single-family homes (SFH), from both NO_PV and WITH_PV groups.
+Field used: ``P_TOT`` (total active power, in Watts).
+
+Preprocessing (PreWPuQHousehold)
+--------------------------------
+1. Read 1-minute resolution household electricity data from all houses.
+2. For each household, filter out NaN/Inf values, then interpolate ``P_TOT``
+   onto a regular 1-minute grid per month using ``np.interp``.
+3. Each household-month becomes one sample: shape ``[1, timesteps_in_month]``.
+   Months with no valid data are skipped (e.g. 2018 months 1-4 are all NaN).
+4. Shuffle and split 50/25/25 into train/val/test.
+5. Save as ``wpuq_household_{year}_{train,val,test}.npz``.
+
+Loading (WPuQHousehold)
+-----------------------
+- Loads the preprocessed NPZ files for years 2018-2020.
+- Optional resolution downsampling via avg_pool1d (e.g. 1min -> 15min).
+- Pads all monthly samples to a fixed length (31 days at target resolution).
+  At 15min resolution: 31 * 96 = 2976 timesteps.
+- Labels: ``month`` (0-11).
+- Supports normalization (minmax or meanstd) and vectorization.
+
+Example usage::
+
+    from smartmeterfm.data_modules.wpuq_household import PreWPuQHousehold, WPuQHousehold
+    from smartmeterfm.utils.configuration import DataConfig
+
+    # Step 1: Preprocess (once)
+    for year in [2018, 2019, 2020]:
+        PreWPuQHousehold(root="data/wpuq/raw", year=year).load_process_save()
+
+    # Step 2: Load dataset
+    cfg = DataConfig(
+        dataset="wpuq_household", root="data/wpuq", resolution="15min",
+        load=False, normalize=True, normalize_method="minmax", pit=False,
+        shuffle=False, vectorize=False, style_vectorize="chronological",
+        vectorize_window_size=3, train_season="all", val_season="all",
+        target_labels="month", segment_type="monthly",
+    )
+    data = WPuQHousehold(cfg)
+    # data.dataset.profile["train"].shape -> [N, 2976, 1]
 """
 
 import os
