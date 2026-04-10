@@ -308,6 +308,7 @@ class WPuQ(TimeSeriesDataCollection):
             "vectorize": data_config.vectorize,
             "style_vectorize": data_config.style_vectorize,
             "vectorize_window_size": data_config.vectorize_window_size,
+            "segment_type": data_config.segment_type,
         }
         hashed_option = self.hash_option(self.process_option)
         processed_filename = (

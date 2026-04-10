@@ -430,7 +430,9 @@ def main():
             logging.warning(f"Checkpoint not found: {args.resume_ckpt}")
 
     # Set up trainer
-    trainer = setup_trainer(args, config, num_gpus, accumulate_grad_batches, use_mps=use_mps)
+    trainer = setup_trainer(
+        args, config, num_gpus, accumulate_grad_batches, use_mps=use_mps
+    )
 
     # Save configuration
     if trainer.is_global_zero:

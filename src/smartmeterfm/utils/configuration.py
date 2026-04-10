@@ -19,6 +19,7 @@ class DataConfig(BaseConfig):
     train_season: str
     val_season: str
     target_labels: str
+    segment_type: str = "daily"  # "daily" or "monthly"
     scaling_factor: list[float] | None = None
 
 

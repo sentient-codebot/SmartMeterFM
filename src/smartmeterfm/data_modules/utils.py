@@ -1229,6 +1229,50 @@ class WPuQReader:
         return len(self.SFHs)
 
 
+class WPuQHouseholdReader:
+    """Read household electricity data from all houses (NO_PV + WITH_PV).
+
+    Iterator: each time returns a structured array with the specified columns
+    for one household.
+    """
+
+    def __init__(self, filename, column_names):
+        self.filename = filename
+        self.column_names = column_names
+
+    def __enter__(self):
+        import h5py
+
+        self.f = h5py.File(self.filename, "r")
+        self.SFHs = []
+        for group in ["NO_PV", "WITH_PV"]:
+            if group in self.f:
+                for sfh in self.f[group].keys():
+                    if "HOUSEHOLD" in self.f[group][sfh].keys():
+                        self.SFHs.append((group, sfh))
+        return self
+
+    def __exit__(self, *args):
+        self.f.close()
+
+    def __iter__(self):
+        self.SFH_index = 0
+        return self
+
+    def __next__(self):
+        if self.SFH_index >= len(self.SFHs):
+            raise StopIteration
+        group, sfh = self.SFHs[self.SFH_index]
+        table = self.f[group][sfh]["HOUSEHOLD"]["table"]
+        table = np.array(table)
+        out = table[self.column_names]
+        self.SFH_index += 1
+        return out
+
+    def __len__(self):
+        return len(self.SFHs)
+
+
 class WPuQPVReader:
     """Read specific columns from a HDF5 file. (only MISC/Transformer)
 
