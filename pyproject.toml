@@ -2,7 +2,7 @@
 name = "smartmeterfm"
 version = "0.1.0"
 description = "flow matching for energy time series data"
-readme = "readme.md"
+readme = "README.md"
 authors = [
     { name = "Nan", email = "nanlin1997@outlook.com" }
 ]
