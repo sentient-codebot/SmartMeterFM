@@ -21,6 +21,7 @@ import json
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -258,20 +259,34 @@ def plot_sr_example(
         sr_std = sr_samples_real.std(dim=0).numpy()
 
         ax.plot(
-            t, original_real.numpy(), label="Original HR",
-            color="tab:blue", linewidth=1.5,
+            t,
+            original_real.numpy(),
+            label="Original HR",
+            color="tab:blue",
+            linewidth=1.5,
         )
         ax.plot(
-            t, sr_mean, label="SR Mean",
-            color="tab:orange", linewidth=1.5,
+            t,
+            sr_mean,
+            label="SR Mean",
+            color="tab:orange",
+            linewidth=1.5,
         )
         ax.fill_between(
-            t, sr_mean - sr_std, sr_mean + sr_std,
-            color="tab:orange", alpha=0.2, label="SR \u00b11\u03c3",
+            t,
+            sr_mean - sr_std,
+            sr_mean + sr_std,
+            color="tab:orange",
+            alpha=0.2,
+            label="SR \u00b11\u03c3",
         )
         ax.plot(
-            t, baseline_real.numpy(), label="Baseline (linear)",
-            color="tab:green", linewidth=1.0, linestyle="--",
+            t,
+            baseline_real.numpy(),
+            label="Baseline (linear)",
+            color="tab:green",
+            linewidth=1.0,
+            linestyle="--",
         )
 
         ax.set_xlabel("Time Step [-]")
@@ -483,9 +498,7 @@ def main():
                 original_real=original_real,
                 sr_samples_real=sr_samples_real,
                 baseline_real=baseline_real,
-                output_path=os.path.join(
-                    figures_dir, f"sr_example_{idx:03d}.png"
-                ),
+                output_path=os.path.join(figures_dir, f"sr_example_{idx:03d}.png"),
                 title=(
                     f"Super-Resolution Example {idx} "
                     f"(month={month}, {args.scale_factor}x)"
