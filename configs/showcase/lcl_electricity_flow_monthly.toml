@@ -54,7 +54,7 @@ method = "euler"
 cfg_scale = 1.0
 
 [train]
-batch_size = 32       # larger batch OK — LCL has ~100k samples
+batch_size = 128       # larger batch OK — LCL has ~100k samples
 lr = 0.0001
 adam_betas = [0.9, 0.999]
 gradient_accumulate_every = 1
