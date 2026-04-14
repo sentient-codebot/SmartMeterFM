@@ -23,6 +23,7 @@ import argparse
 import os
 
 import torch
+from einops import rearrange
 from tqdm import tqdm
 
 from smartmeterfm.data_modules.heat_pump import WPuQ
@@ -103,57 +104,65 @@ def impute_with_flow(
     observed_data: torch.Tensor,
     mask: torch.Tensor,
     condition: dict,
+    patch_size: int,
     num_samples: int = 10,
     num_steps: int = 100,
     device: str = "cuda",
 ) -> torch.Tensor:
     """Perform imputation using Flow Matching with posterior sampling.
 
+    The model operates in patchified space [B, seq_patches, patch_size], but
+    the projection (keeping observed values fixed) is applied in the actual
+    temporal domain [B, 1, seq_length] to ensure per-timestep masking.
+
     Args:
         model: Trained FlowModelPL model.
-        observed_data: The observed time series with missing values.
-        mask: Binary mask (1 = observed, 0 = missing).
+        observed_data: The observed time series in real space [seq_length].
+        mask: Binary mask in real space [seq_length] (1 = observed, 0 = missing).
         condition: Conditioning information (e.g., month).
+        patch_size: Patch size used for vectorization.
         num_samples: Number of imputation samples to generate.
         num_steps: Number of ODE integration steps.
         device: Device to use.
 
     Returns:
-        Imputed samples tensor of shape [num_samples, *data_shape].
+        Imputed samples in real space [num_samples, seq_length].
     """
     model.eval()
     model.to(device)
+
+    seq_length = observed_data.shape[0]
+    # Patchified shape for model: [B, patch_size, seq_length // patch_size]
+    patch_shape = (1, patch_size, seq_length // patch_size)
+
+    observed_real = observed_data.unsqueeze(0).to(device)  # [1, seq_length]
+    mask_real = mask.unsqueeze(0).to(device)  # [1, seq_length]
 
     all_imputed = []
 
     for _ in tqdm(range(num_samples), desc="Generating imputations"):
         with torch.no_grad():
-            # Sample from prior
-            x_0 = torch.randn_like(observed_data.unsqueeze(0)).to(device)
-
-            # ODE integration with projection
-            x_t = x_0
+            # Sample from prior in patchified space
+            x_t = torch.randn(*patch_shape, device=device)
             dt = 1.0 / num_steps
 
             for step in range(num_steps):
                 t = torch.full((1,), step * dt, device=device)
 
-                # Get velocity prediction
+                # Get velocity prediction (model operates in patch space)
                 velocity = model.model(x_t, t, y=condition)
-
-                # Update
                 x_t = x_t + velocity * dt
 
-                # Project: keep observed values fixed
-                x_t_flat = x_t.flatten(1)
-                observed_flat = observed_data.flatten().unsqueeze(0).to(device)
-                mask_flat = mask.flatten().unsqueeze(0).to(device)
+                # Project in real temporal space: keep observed values fixed
+                # Unpatchify: [B, C, L] -> [B, 1, C*L] -> [B, seq_length]
+                x_t_real = rearrange(x_t, "b c l -> b (l c)")
+                x_t_real = x_t_real * (1 - mask_real) + observed_real * mask_real
+                # Re-patchify: [B, seq_length] -> [B, C, L]
+                x_t = rearrange(x_t_real, "b (l c) -> b c l", c=patch_size)
 
-                # Replace observed positions with original values
-                x_t_flat = x_t_flat * (1 - mask_flat) + observed_flat * mask_flat
-                x_t = x_t_flat.view_as(x_t)
-
-            all_imputed.append(x_t.cpu())
+            # Store result in real space
+            x_t_real = rearrange(x_t, "b c l -> b (l c)")
+            all_imputed.append(x_t_real.cpu())
 
     return torch.cat(all_imputed, dim=0)
 
@@ -332,52 +341,56 @@ def main():
 
     test_profiles = data_collection.dataset.profile["test"][: args.num_test_series]
     test_labels = data_collection.dataset.label["test"]
+    patch_size = data_config.vectorize_window_size
 
     # Run imputation
     all_metrics = []
 
     print(f"\nRunning imputation on {len(test_profiles)} time series...")
     for idx in tqdm(range(len(test_profiles)), desc="Imputing"):
-        original = test_profiles[idx]  # [seq_len, channels]
+        original_patched = test_profiles[idx]  # [patch_size, num_patches] (patchified)
         month = test_labels["month"][idx].item()
 
-        # Generate mask
-        flat_length = original.numel()
+        # Unpatchify to real temporal space: [C, L] -> [C*L]
+        original_real = rearrange(original_patched, "c l -> (l c)")  # [seq_length]
+        seq_length = original_real.shape[0]
+
+        # Generate mask in real temporal space
         if args.imputation_type == "mcar":
             mask = generate_mcar_mask(
-                flat_length, args.missing_rate, seed=args.seed + idx
+                seq_length, args.missing_rate, seed=args.seed + idx
             )
         else:
             mask = generate_mnar_consecutive_mask(
-                flat_length,
+                seq_length,
                 args.missing_rate,
                 args.min_block_size,
                 seed=args.seed + idx,
             )
 
-        # Create observed data (with missing values set to 0)
-        observed = original.clone()
-        mask_reshaped = mask.view_as(original)
-        observed = observed * mask_reshaped
+        # Create observed data in real space (with missing values set to 0)
+        observed_real = original_real.clone()
+        observed_real = observed_real * mask
 
         # Create condition
         condition = {
             "month": torch.tensor([[month]], dtype=torch.long, device=args.device)
         }
 
-        # Impute
-        imputed = impute_with_flow(
+        # Impute (operates in patch space internally, projects in real space)
+        imputed_real = impute_with_flow(
             model,
-            observed,
-            mask_reshaped,
+            observed_real,
+            mask,
             condition,
+            patch_size=patch_size,
             num_samples=args.num_samples,
             num_steps=args.num_steps,
             device=args.device,
         )
 
-        # Evaluate
-        metrics = evaluate_imputation(original, imputed, mask_reshaped)
+        # Evaluate in real temporal space
+        metrics = evaluate_imputation(original_real, imputed_real, mask)
         metrics["sample_idx"] = idx
         metrics["month"] = month
         all_metrics.append(metrics)

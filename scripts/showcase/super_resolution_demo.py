@@ -20,12 +20,12 @@ import os
 
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 from tqdm import tqdm
 
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
-from smartmeterfm.models.measurement import get_operator
 from smartmeterfm.utils.configuration import DataConfig
 
 
@@ -81,9 +81,7 @@ def upsample_linear(data: torch.Tensor, scale_factor: int) -> torch.Tensor:
 
     # Linear interpolation to target size (handles non-divisible lengths)
     target_len = data.shape[2] * scale_factor
-    data_hr = F.interpolate(
-        data, size=target_len, mode="linear", align_corners=False
-    )
+    data_hr = F.interpolate(data, size=target_len, mode="linear", align_corners=False)
 
     # [batch, channels, seq_len_hr] -> [batch, seq_len_hr, channels]
     data_hr = data_hr.permute(0, 2, 1)
@@ -96,78 +94,86 @@ def upsample_linear(data: torch.Tensor, scale_factor: int) -> torch.Tensor:
 
 def super_resolve_with_flow(
     model,
-    low_res_data: torch.Tensor,
+    low_res_real: torch.Tensor,
     scale_factor: int,
     condition: dict,
     target_seq_len: int,
+    patch_size: int,
     num_samples: int = 10,
     num_steps: int = 100,
     device: str = "cuda",
 ) -> torch.Tensor:
     """Perform super-resolution using Flow Matching with posterior sampling.
 
+    The model operates in patchified space [B, patch_size, num_patches], but
+    the SR projection (downsampling constraint) is applied in the actual
+    temporal domain [B, 1, seq_length].
+
     Args:
         model: Trained FlowModelPL model.
-        low_res_data: Low-resolution time series.
+        low_res_real: Low-resolution time series in real space [lr_seq_len].
         scale_factor: Upsampling factor.
         condition: Conditioning information.
-        target_seq_len: Original high-resolution sequence length.
+        target_seq_len: Original high-resolution sequence length (real space).
+        patch_size: Patch size used for vectorization.
         num_samples: Number of SR samples to generate.
         num_steps: Number of ODE integration steps.
         device: Device to use.
 
     Returns:
-        Super-resolved samples tensor of shape [num_samples, *high_res_shape].
+        Super-resolved samples in real space [num_samples, target_seq_len].
     """
     model.eval()
     model.to(device)
 
-    # Get super-resolution operator
-    sr_op = get_operator(name="super_resolution", scale_factor=scale_factor)
+    # Patchified shape for model: [B, patch_size, num_patches]
+    num_patches = target_seq_len // patch_size
+    patch_shape = (1, patch_size, num_patches)
 
-    # Target high-res shape (use original size, not low_res * scale_factor)
-    hr_shape = (target_seq_len, low_res_data.shape[1])
+    low_res_expanded = low_res_real.unsqueeze(0).to(device)  # [1, lr_seq_len]
 
     all_sr = []
 
     for _ in tqdm(range(num_samples), desc="Generating SR samples"):
         with torch.no_grad():
-            # Sample from prior
-            x_0 = torch.randn(1, *hr_shape, device=device)
-
-            # ODE integration with SR constraint
-            x_t = x_0
+            # Sample from prior in patchified space
+            x_t = torch.randn(*patch_shape, device=device)
             dt = 1.0 / num_steps
 
             for step in range(num_steps):
                 t = torch.full((1,), step * dt, device=device)
 
-                # Get velocity prediction
+                # Get velocity prediction (model operates in patch space)
                 velocity = model.model(x_t, t, y=condition)
-
-                # Update
                 x_t = x_t + velocity * dt
 
-                # Project: ensure downsampled version matches low-res input
-                # This is a soft constraint using gradient-based projection
-                x_t_down = downsample(x_t, scale_factor)
-                low_res_expanded = low_res_data.unsqueeze(0).to(device)
+                # Project in real temporal space
+                # Unpatchify: [B, C, L] -> [B, L*C]
+                x_t_real = rearrange(x_t, "b c l -> b (l c)")
 
-                # Compute correction
-                error = low_res_expanded - x_t_down
-                # Distribute error back to high-res via interpolation
-                # (handles non-divisible lengths correctly)
-                error_t = error.permute(0, 2, 1)  # [B, C, lr_len]
-                correction_t = F.interpolate(
-                    error_t, size=target_seq_len, mode="nearest"
-                )
-                correction = correction_t.permute(0, 2, 1)  # [B, hr_len, C]
+                # Downsample in real space and compare to low-res input
+                x_t_real_3d = x_t_real.unsqueeze(1)  # [B, 1, seq_len]
+                x_t_down = F.avg_pool1d(
+                    x_t_real_3d, kernel_size=scale_factor, stride=scale_factor
+                ).squeeze(1)  # [B, lr_seq_len]
 
-                # Apply correction with decreasing strength as t increases
+                # Compute correction in real space
+                error = low_res_expanded - x_t_down  # [B, lr_seq_len]
+                error_3d = error.unsqueeze(1)  # [B, 1, lr_seq_len]
+                correction = F.interpolate(
+                    error_3d, size=target_seq_len, mode="nearest"
+                ).squeeze(1)  # [B, seq_len]
+
+                # Apply correction with decreasing strength
                 correction_strength = max(0, 1 - step / num_steps)
-                x_t = x_t + correction_strength * correction
+                x_t_real = x_t_real + correction_strength * correction
 
-            all_sr.append(x_t.cpu())
+                # Re-patchify: [B, seq_len] -> [B, C, L]
+                x_t = rearrange(x_t_real, "b (l c) -> b c l", c=patch_size)
+
+            # Store result in real space
+            x_t_real = rearrange(x_t, "b c l -> b (l c)")
+            all_sr.append(x_t_real.cpu())
 
     return torch.cat(all_sr, dim=0)
 
@@ -337,6 +343,7 @@ def main():
 
     test_profiles = data_collection.dataset.profile["test"][: args.num_test_series]
     test_labels = data_collection.dataset.label["test"]
+    patch_size = data_config.vectorize_window_size
 
     # Run super-resolution
     all_metrics = []
@@ -345,37 +352,47 @@ def main():
         f"\nRunning {args.scale_factor}x super-resolution on {len(test_profiles)} time series..."
     )
     for idx in tqdm(range(len(test_profiles)), desc="Super-resolving"):
-        original_hr = test_profiles[idx]  # [seq_len, channels]
+        original_patched = test_profiles[idx]  # [patch_size, num_patches] (patchified)
         month = test_labels["month"][idx].item()
 
-        # Downsample to create low-res input
-        low_res = downsample(original_hr, args.scale_factor)
+        # Unpatchify to real temporal space: [C, L] -> [C*L]
+        original_real = rearrange(original_patched, "c l -> (l c)")  # [seq_length]
+        seq_length = original_real.shape[0]
 
-        # Baseline: linear interpolation
-        target_seq_len = original_hr.shape[0]
-        baseline_hr = upsample_linear(low_res, args.scale_factor)
-        # Trim or pad baseline to match original length
-        baseline_hr = baseline_hr[:target_seq_len]
+        # Downsample in real temporal space
+        lr_real = F.avg_pool1d(
+            original_real.view(1, 1, -1),
+            kernel_size=args.scale_factor,
+            stride=args.scale_factor,
+        ).squeeze()  # [lr_seq_len]
+
+        # Baseline: linear interpolation in real space
+        baseline_real = F.interpolate(
+            lr_real.view(1, 1, -1), size=seq_length, mode="linear", align_corners=False
+        ).squeeze()  # [seq_length]
 
         # Create condition
         condition = {
             "month": torch.tensor([[month]], dtype=torch.long, device=args.device)
         }
 
-        # Super-resolve with Flow model
-        sr_samples = super_resolve_with_flow(
+        # Super-resolve (model in patch space, projection in real space)
+        sr_samples_real = super_resolve_with_flow(
             model,
-            low_res,
+            lr_real,
             args.scale_factor,
             condition,
-            target_seq_len=target_seq_len,
+            target_seq_len=seq_length,
+            patch_size=patch_size,
             num_samples=args.num_samples,
             num_steps=args.num_steps,
             device=args.device,
         )
 
-        # Evaluate
-        metrics = evaluate_super_resolution(original_hr, sr_samples, baseline_hr)
+        # Evaluate in real temporal space
+        metrics = evaluate_super_resolution(
+            original_real, sr_samples_real, baseline_real
+        )
         metrics["sample_idx"] = idx
         metrics["month"] = month
         all_metrics.append(metrics)
