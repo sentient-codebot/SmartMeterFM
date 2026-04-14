@@ -64,9 +64,9 @@ def load_generated_samples(samples_dir: str) -> dict[int, torch.Tensor]:
 
 
 def load_test_data(config: ExperimentConfig):
-    wpuq_data = WPuQHousehold(config.data)
-    test_profiles = wpuq_data.dataset.profile["test"]
-    test_labels = wpuq_data.dataset.label["test"]
+    data_collection = WPuQHousehold(config.data)
+    test_profiles = data_collection.dataset.profile["test"]
+    test_labels = data_collection.dataset.label["test"]
     return test_profiles, test_labels["month"]
 
 

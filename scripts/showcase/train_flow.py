@@ -134,7 +134,7 @@ def calculate_batch_sizes(args, config, num_gpus):
 
 
 def setup_data_module(config: ExperimentConfig):
-    """Set up the WPuQ data module.
+    """Set up the data module.
 
     Args:
         config: Experiment configuration.
@@ -353,8 +353,8 @@ def setup_trainer(
     return trainer
 
 
-class WPuQDataModule(pl.LightningDataModule):
-    """PyTorch Lightning DataModule wrapper for WPuQ data."""
+class SimpleDataModule(pl.LightningDataModule):
+    """PyTorch Lightning DataModule wrapper for pre-built dataloaders."""
 
     def __init__(self, train_loader, val_loader):
         super().__init__()
@@ -443,7 +443,7 @@ def main():
 
     # Set up data module
     train_loader, val_loader, sample_shape, data_collection = setup_data_module(config)
-    data_module = WPuQDataModule(train_loader, val_loader)
+    data_module = SimpleDataModule(train_loader, val_loader)
 
     # Create model
     pl_flow = create_flow_model(config, sample_shape)

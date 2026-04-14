@@ -111,17 +111,17 @@ def calculate_batch_sizes(args, config, num_gpus):
 
 
 def setup_data_module(config: ExperimentConfig):
-    """Set up the WPuQ data module."""
+    """Set up the data module."""
     logging.info("Setting up WPuQ Heat Pump data module...")
 
     data_config = config.data
-    wpuq_data = WPuQ(data_config)
+    data_collection = WPuQ(data_config)
 
-    train_profiles = wpuq_data.dataset.profile["train"]
-    val_profiles = wpuq_data.dataset.profile["val"]
+    train_profiles = data_collection.dataset.profile["train"]
+    val_profiles = data_collection.dataset.profile["val"]
 
-    train_labels = wpuq_data.dataset.label["train"]
-    val_labels = wpuq_data.dataset.label["val"]
+    train_labels = data_collection.dataset.label["train"]
+    val_labels = data_collection.dataset.label["val"]
 
     train_dataset = TensorDataset(
         train_profiles,
@@ -279,8 +279,8 @@ def setup_trainer(args, config, num_gpus, accumulate_grad_batches):
     return trainer
 
 
-class WPuQDataModule(pl.LightningDataModule):
-    """PyTorch Lightning DataModule wrapper for WPuQ data."""
+class SimpleDataModule(pl.LightningDataModule):
+    """PyTorch Lightning DataModule wrapper for pre-built dataloaders."""
 
     def __init__(self, train_loader, val_loader):
         super().__init__()
@@ -376,7 +376,7 @@ def main():
 
     # Set up data module
     train_loader, val_loader, sample_shape = setup_data_module(config)
-    data_module = WPuQDataModule(train_loader, val_loader)
+    data_module = SimpleDataModule(train_loader, val_loader)
 
     # Create model
     pl_vae = create_vae_model(config, sample_shape, args.latent_dim, args.beta)

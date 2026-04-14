@@ -305,10 +305,10 @@ def main():
         train_season="whole_year",
         val_season="whole_year",
     )
-    wpuq_data = WPuQ(data_config)
+    data_collection = WPuQ(data_config)
 
-    test_profiles = wpuq_data.dataset.profile["test"][: args.num_test_series]
-    test_labels = wpuq_data.dataset.label["test"]
+    test_profiles = data_collection.dataset.profile["test"][: args.num_test_series]
+    test_labels = data_collection.dataset.label["test"]
 
     # Run super-resolution
     all_metrics = []

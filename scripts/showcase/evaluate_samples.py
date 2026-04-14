@@ -75,16 +75,16 @@ def load_generated_samples(samples_dir: str) -> dict[int, torch.Tensor]:
 
 
 def load_test_data(config: ExperimentConfig) -> tuple[torch.Tensor, torch.Tensor]:
-    """Load test data using the WPuQHousehold data module.
+    """Load test data using the data module.
 
     Returns:
         Tuple of (test_profiles, test_month_labels)
     """
     logging.info("Loading test data from WPuQHousehold data module...")
-    wpuq_data = WPuQHousehold(config.data)
+    data_collection = WPuQHousehold(config.data)
 
-    test_profiles = wpuq_data.dataset.profile["test"]  # [N, seq_len, channels]
-    test_labels = wpuq_data.dataset.label["test"]
+    test_profiles = data_collection.dataset.profile["test"]  # [N, seq_len, channels]
+    test_labels = data_collection.dataset.label["test"]
 
     logging.info(f"Test data shape: {test_profiles.shape}")
     logging.info(f"Test labels: {list(test_labels.dict_labels.keys())}")
