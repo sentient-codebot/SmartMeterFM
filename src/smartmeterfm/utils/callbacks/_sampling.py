@@ -53,25 +53,34 @@ class PeriodicSamplingCallback(pl.Callback):
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._pending: Future | None = None
         self._stream: torch.cuda.Stream | None = None
+        self._wandb_metric_defined: bool = False
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         step = trainer.global_step
         if not trainer.is_global_zero:
             return
+
+        # Check for completed background job and log results from main thread
+        if self._pending is not None and self._pending.done():
+            exc = self._pending.exception()
+            if exc:
+                logger.error("Sampling job failed: %s", exc)
+            else:
+                result = self._pending.result()
+                if result is not None:
+                    fig_path, sample_step = result
+                    self._log_figure(fig_path, sample_step, trainer)
+            self._pending = None
+
         if step == 0 or step % self.sample_every != 0:
             return
 
-        # Check previous job
+        # Previous job still running — skip this interval
         if self._pending is not None:
-            if not self._pending.done():
-                logger.warning(
-                    "Previous sampling job still running at step %d, skipping.", step
-                )
-                return
-            exc = self._pending.exception()
-            if exc:
-                logger.error("Previous sampling job failed: %s", exc)
-            self._pending = None
+            logger.warning(
+                "Previous sampling job still running at step %d, skipping.", step
+            )
+            return
 
         # Snapshot velocity model (fast for small models)
         velocity_model = copy.deepcopy(pl_module.get_ema_velocity_model()).eval()
@@ -95,17 +104,6 @@ class PeriodicSamplingCallback(pl.Callback):
                 cfg_scale=cfg_scale,
             )
 
-        # Capture wandb run in main thread — it may not be visible from the
-        # background thread via the wandb.run global.
-        wandb_run = None
-        if self.log_wandb:
-            try:
-                import wandb
-
-                wandb_run = wandb.run
-            except Exception:
-                pass
-
         self._pending = self._executor.submit(
             self._generate_and_log,
             velocity_model,
@@ -113,9 +111,7 @@ class PeriodicSamplingCallback(pl.Callback):
             num_ch,
             device,
             step,
-            trainer,
             cfg_scale,
-            wandb_run,
         )
 
     def _generate_and_log(
@@ -125,11 +121,13 @@ class PeriodicSamplingCallback(pl.Callback):
         num_ch,
         device,
         step,
-        trainer,
         cfg_scale,
-        wandb_run=None,
     ):
-        """Run ODE integration, save samples, plot, and log. Runs in background thread."""
+        """Run ODE integration, save samples, and plot. Runs in background thread.
+
+        Returns:
+            Tuple of (fig_path, step) for the main thread to log, or None on failure.
+        """
         num_sample = self.sample_config.num_sample
         num_steps = self.sample_config.num_sampling_step
         batch_size = self.sample_config.val_batch_size
@@ -207,17 +205,37 @@ class PeriodicSamplingCallback(pl.Callback):
         fig_path = os.path.join(step_dir, "samples_overview.png")
         fig = plot_sampled_data_v2(flat_samples, save_filepath=fig_path)
 
-        # Log to wandb (use run reference captured in main thread)
-        if self.log_wandb and wandb_run is not None:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+        return (fig_path, step)
+
+    def _log_figure(self, fig_path, sample_step, trainer):
+        """Log a generated figure to wandb/mlflow. Must be called from the main thread."""
+        if self.log_wandb:
             try:
                 import wandb
 
-                wandb_run.log({"Samples/overview": wandb.Image(fig_path)}, step=step)
-                logger.info("Logged sample figure to wandb at step %d", step)
+                if wandb.run is not None:
+                    if not self._wandb_metric_defined:
+                        wandb.define_metric(
+                            "Samples/*", step_metric="Samples/train_step"
+                        )
+                        self._wandb_metric_defined = True
+                    wandb.run.log(
+                        {
+                            "Samples/overview": wandb.Image(fig_path),
+                            "Samples/train_step": sample_step,
+                        }
+                    )
+                    logger.info(
+                        "Logged sample figure to wandb (generated at step %d)",
+                        sample_step,
+                    )
             except Exception as e:
                 logger.warning("Failed to log samples to wandb: %s", e)
 
-        # Log to mlflow
         if self.log_mlflow:
             try:
                 for lg in trainer.loggers or []:
@@ -227,15 +245,14 @@ class PeriodicSamplingCallback(pl.Callback):
             except Exception as e:
                 logger.warning("Failed to log samples to mlflow: %s", e)
 
-        import matplotlib.pyplot as plt
-
-        plt.close(fig)
-
     def on_train_end(self, trainer, pl_module):
-        """Wait for any pending background job before training ends."""
+        """Wait for any pending background job and log its result before training ends."""
         if self._pending is not None:
             try:
-                self._pending.result(timeout=120)
+                result = self._pending.result(timeout=120)
+                if result is not None:
+                    fig_path, sample_step = result
+                    self._log_figure(fig_path, sample_step, trainer)
             except Exception as e:
                 logger.error("Final sampling job failed: %s", e)
         self._executor.shutdown(wait=False)
