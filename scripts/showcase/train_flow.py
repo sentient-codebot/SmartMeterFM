@@ -22,6 +22,7 @@ Example:
 """
 
 import argparse
+import calendar
 import logging
 import math
 import os
@@ -32,6 +33,7 @@ import torch
 from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import DataLoader, TensorDataset
 
+from smartmeterfm.data_modules.base import RESOLUTION_SECONDS
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.models.flow import FlowModelPL
@@ -55,11 +57,37 @@ from smartmeterfm.utils.eval import (
 )
 
 
-def dict_collate_fn(batch):
-    """Collate function that wraps condition tensor into a dict for the model."""
-    profiles = torch.stack([b[0] for b in batch])
-    months = torch.stack([b[1] for b in batch])
-    return profiles, {"month": months}
+def make_collate_fn(label_keys: list[str]):
+    """Create a collate function that packs labels into a condition dict.
+
+    Derives ``first_day_of_week`` and ``month_length`` from ``year`` and
+    ``month`` labels when both are present.
+    """
+
+    def collate_fn(batch):
+        profiles = torch.stack([b[0] for b in batch])
+        condition: dict[str, torch.Tensor] = {}
+        for i, key in enumerate(label_keys, start=1):
+            condition[key] = torch.stack([b[i] for b in batch])
+
+        # Derive first_day_of_week and month_length from (year, month)
+        if "year" in condition and "month" in condition:
+            years = condition["year"].squeeze(1)  # [batch]
+            months = condition["month"].squeeze(1)  # [batch], 0-indexed
+            fdow = torch.zeros_like(years)
+            ml = torch.zeros_like(years)
+            for i in range(len(years)):
+                y = years[i].item()
+                m = months[i].item() + 1  # back to 1-indexed
+                weekday, days = calendar.monthrange(y, m)
+                fdow[i] = weekday
+                ml[i] = days - 28
+            condition["first_day_of_week"] = fdow.unsqueeze(1)
+            condition["month_length"] = ml.unsqueeze(1)
+
+        return profiles, condition
+
+    return collate_fn
 
 
 def setup_logging(run_id: str, level: int = logging.INFO):
@@ -164,15 +192,18 @@ def setup_data_module(config: ExperimentConfig):
     train_labels = data_collection.dataset.label["train"]
     val_labels = data_collection.dataset.label["val"]
 
-    # Create PyTorch datasets
+    # Extract all available label keys (preserving order)
+    label_keys = list(train_labels.keys())
+
+    # Create PyTorch datasets with all labels
     train_dataset = TensorDataset(
-        train_profiles,
-        train_labels["month"],
+        train_profiles, *[train_labels[k] for k in label_keys]
     )
     val_dataset = TensorDataset(
-        val_profiles,
-        val_labels["month"],
+        val_profiles, *[val_labels[k] for k in label_keys]
     )
+
+    collate_fn = make_collate_fn(label_keys)
 
     # Create dataloaders
     train_loader = DataLoader(
@@ -182,7 +213,7 @@ def setup_data_module(config: ExperimentConfig):
         num_workers=4,
         pin_memory=True,
         drop_last=True,
-        collate_fn=dict_collate_fn,
+        collate_fn=collate_fn,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -190,7 +221,7 @@ def setup_data_module(config: ExperimentConfig):
         shuffle=False,
         num_workers=4,
         pin_memory=True,
-        collate_fn=dict_collate_fn,
+        collate_fn=collate_fn,
     )
 
     sample_shape = train_profiles.shape[1:]  # [seq_len, channels]
@@ -241,6 +272,13 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
     # Set up metrics
     make_metrics = setup_metrics()
 
+    # Compute steps_per_day from resolution
+    resolution = config.data.resolution
+    steps_per_day = 86400 // RESOLUTION_SECONDS[resolution]
+
+    # Enable masking for monthly-segmented data
+    is_monthly = getattr(config.data, "segment_type", "daily") == "monthly"
+
     # Create model
     pl_flow = FlowModelPL(
         flow_config=config.flow,
@@ -253,7 +291,8 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
         context_embedder_name=None,  # No context for basic conditional generation
         context_embedder_args=None,
         metrics_factory=make_metrics,
-        create_mask=False,
+        create_mask=is_monthly,
+        steps_per_day=steps_per_day,
     )
 
     config.model.num_parameter = count_parameters(pl_flow.model)

@@ -19,6 +19,7 @@ Example:
 """
 
 import argparse
+import calendar
 import os
 
 import torch
@@ -35,6 +36,7 @@ def generate_flow_samples(
     batch_size: int = 256,
     cfg_scale: float = 1.0,
     device: str = "cuda",
+    year: int | None = None,
 ) -> dict[int, torch.Tensor]:
     """Generate samples using a trained Flow Matching model.
 
@@ -46,6 +48,7 @@ def generate_flow_samples(
         batch_size: Batch size for generation.
         cfg_scale: Classifier-free guidance scale.
         device: Device to use for generation.
+        year: Optional year for deriving position/masking conditions.
 
     Returns:
         Dictionary mapping month index to generated samples tensor.
@@ -79,7 +82,15 @@ def generate_flow_samples(
             remaining -= curr_batch_size
 
             # Create condition tensor
-            cond = WPuQCondition(month=month)
+            cond_kwargs = {"month": month}
+            if year is not None:
+                weekday, days = calendar.monthrange(year, month + 1)
+                cond_kwargs.update(
+                    year=year,
+                    first_day_of_week=weekday,
+                    month_length=days - 28,
+                )
+            cond = WPuQCondition(**cond_kwargs)
             condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 
             # Generate samples
@@ -127,6 +138,7 @@ def generate_vae_samples(
     months: list[int],
     batch_size: int = 256,
     device: str = "cuda",
+    year: int | None = None,
 ) -> dict[int, torch.Tensor]:
     """Generate samples using a trained VAE model.
 
@@ -136,6 +148,7 @@ def generate_vae_samples(
         months: List of months (0-11) to generate samples for.
         batch_size: Batch size for generation.
         device: Device to use for generation.
+        year: Optional year for deriving position/masking conditions.
 
     Returns:
         Dictionary mapping month index to generated samples tensor.
@@ -163,7 +176,15 @@ def generate_vae_samples(
             remaining -= curr_batch_size
 
             # Create condition tensor
-            cond = WPuQCondition(month=month)
+            cond_kwargs = {"month": month}
+            if year is not None:
+                weekday, days = calendar.monthrange(year, month + 1)
+                cond_kwargs.update(
+                    year=year,
+                    first_day_of_week=weekday,
+                    month_length=days - 28,
+                )
+            cond = WPuQCondition(**cond_kwargs)
             condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 
             with torch.no_grad():
@@ -283,6 +304,13 @@ def main():
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device to use for generation",
     )
+    parser.add_argument(
+        "--year",
+        type=int,
+        default=None,
+        help="Year for deriving weekday alignment and month length conditions "
+        "(e.g. 2019). If omitted, these conditions are left unconditional.",
+    )
     args = parser.parse_args()
 
     # Validate months
@@ -306,6 +334,7 @@ def main():
             batch_size=args.batch_size,
             cfg_scale=args.cfg_scale,
             device=args.device,
+            year=args.year,
         )
     else:  # vae
         samples_by_month = generate_vae_samples(
@@ -314,6 +343,7 @@ def main():
             months=args.months,
             batch_size=args.batch_size,
             device=args.device,
+            year=args.year,
         )
 
     # Save samples

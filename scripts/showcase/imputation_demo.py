@@ -20,6 +20,7 @@ Example:
 """
 
 import argparse
+import calendar
 import os
 
 import torch
@@ -373,10 +374,22 @@ def main():
         observed_real = original_real.clone()
         observed_real = observed_real * mask
 
-        # Create condition
+        # Create condition with position/masking info when year is available
         condition = {
             "month": torch.tensor([[month]], dtype=torch.long, device=args.device)
         }
+        if "year" in test_labels:
+            year = test_labels["year"][idx].item()
+            weekday, days = calendar.monthrange(year, month + 1)
+            condition["year"] = torch.tensor(
+                [[year]], dtype=torch.long, device=args.device
+            )
+            condition["first_day_of_week"] = torch.tensor(
+                [[weekday]], dtype=torch.long, device=args.device
+            )
+            condition["month_length"] = torch.tensor(
+                [[days - 28]], dtype=torch.long, device=args.device
+            )
 
         # Impute (operates in patch space internally, projects in real space)
         imputed_real = impute_with_flow(

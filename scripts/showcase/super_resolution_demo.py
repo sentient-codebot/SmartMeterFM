@@ -18,6 +18,8 @@ Example:
 import argparse
 import os
 
+import calendar
+
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -371,10 +373,22 @@ def main():
             lr_real.view(1, 1, -1), size=seq_length, mode="linear", align_corners=False
         ).squeeze()  # [seq_length]
 
-        # Create condition
+        # Create condition with position/masking info when year is available
         condition = {
             "month": torch.tensor([[month]], dtype=torch.long, device=args.device)
         }
+        if "year" in test_labels:
+            year = test_labels["year"][idx].item()
+            weekday, days = calendar.monthrange(year, month + 1)
+            condition["year"] = torch.tensor(
+                [[year]], dtype=torch.long, device=args.device
+            )
+            condition["first_day_of_week"] = torch.tensor(
+                [[weekday]], dtype=torch.long, device=args.device
+            )
+            condition["month_length"] = torch.tensor(
+                [[days - 28]], dtype=torch.long, device=args.device
+            )
 
         # Super-resolve (model in patch space, projection in real space)
         sr_samples_real = super_resolve_with_flow(

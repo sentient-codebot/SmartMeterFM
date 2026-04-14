@@ -16,6 +16,7 @@ Example:
 """
 
 import argparse
+import calendar
 import logging
 import math
 import os
@@ -26,7 +27,10 @@ import torch
 from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import DataLoader, TensorDataset
 
+from smartmeterfm.data_modules.base import RESOLUTION_SECONDS
 from smartmeterfm.data_modules.heat_pump import WPuQ
+from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
+from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.models.baselines.cond_gen.vae import VAEModelPL
 from smartmeterfm.utils.configuration import (
     ExperimentConfig,
@@ -110,12 +114,52 @@ def calculate_batch_sizes(args, config, num_gpus):
     return local_batch_size, accumulate_grad_batches, effective_batch_size
 
 
+def make_collate_fn(label_keys: list[str]):
+    """Create a collate function that packs labels into a condition dict.
+
+    Derives ``first_day_of_week`` and ``month_length`` from ``year`` and
+    ``month`` labels when both are present.
+    """
+
+    def collate_fn(batch):
+        profiles = torch.stack([b[0] for b in batch])
+        condition: dict[str, torch.Tensor] = {}
+        for i, key in enumerate(label_keys, start=1):
+            condition[key] = torch.stack([b[i] for b in batch])
+
+        if "year" in condition and "month" in condition:
+            years = condition["year"].squeeze(1)
+            months = condition["month"].squeeze(1)
+            fdow = torch.zeros_like(years)
+            ml = torch.zeros_like(years)
+            for i in range(len(years)):
+                y = years[i].item()
+                m = months[i].item() + 1
+                weekday, days = calendar.monthrange(y, m)
+                fdow[i] = weekday
+                ml[i] = days - 28
+            condition["first_day_of_week"] = fdow.unsqueeze(1)
+            condition["month_length"] = ml.unsqueeze(1)
+
+        return profiles, condition
+
+    return collate_fn
+
+
 def setup_data_module(config: ExperimentConfig):
     """Set up the data module."""
-    logging.info("Setting up WPuQ Heat Pump data module...")
-
     data_config = config.data
-    data_collection = WPuQ(data_config)
+    dataset_name = getattr(data_config, "dataset", "wpuq")
+
+    if dataset_name == "wpuq_household":
+        logging.info("Setting up WPuQ Household data module...")
+        data_collection = WPuQHousehold(data_config)
+    elif dataset_name == "lcl_electricity":
+        logging.info("Setting up LCL Electricity data module...")
+        data_collection = LCLElectricity(data_config)
+    else:
+        logging.info("Setting up WPuQ Heat Pump data module...")
+        data_collection = WPuQ(data_config)
 
     train_profiles = data_collection.dataset.profile["train"]
     val_profiles = data_collection.dataset.profile["val"]
@@ -123,14 +167,16 @@ def setup_data_module(config: ExperimentConfig):
     train_labels = data_collection.dataset.label["train"]
     val_labels = data_collection.dataset.label["val"]
 
+    label_keys = list(train_labels.keys())
+
     train_dataset = TensorDataset(
-        train_profiles,
-        train_labels["month"],
+        train_profiles, *[train_labels[k] for k in label_keys]
     )
     val_dataset = TensorDataset(
-        val_profiles,
-        val_labels["month"],
+        val_profiles, *[val_labels[k] for k in label_keys]
     )
+
+    collate_fn = make_collate_fn(label_keys)
 
     train_loader = DataLoader(
         train_dataset,
@@ -139,6 +185,7 @@ def setup_data_module(config: ExperimentConfig):
         num_workers=4,
         pin_memory=True,
         drop_last=True,
+        collate_fn=collate_fn,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -146,6 +193,7 @@ def setup_data_module(config: ExperimentConfig):
         shuffle=False,
         num_workers=4,
         pin_memory=True,
+        collate_fn=collate_fn,
     )
 
     sample_shape = train_profiles.shape[1:]
@@ -154,7 +202,7 @@ def setup_data_module(config: ExperimentConfig):
         f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}"
     )
 
-    return train_loader, val_loader, sample_shape
+    return train_loader, val_loader, sample_shape, data_collection
 
 
 def setup_metrics():
@@ -203,6 +251,13 @@ def create_vae_model(
     # Calculate output length (flattened profile)
     output_length = sample_shape[0] * sample_shape[1]
 
+    # Compute steps_per_day from resolution
+    resolution = config.data.resolution
+    steps_per_day = 86400 // RESOLUTION_SECONDS[resolution]
+
+    # Enable masking for monthly-segmented data
+    is_monthly = getattr(config.data, "segment_type", "daily") == "monthly"
+
     # Create model
     pl_vae = VAEModelPL(
         num_in_channel=1,  # VAE uses flattened input
@@ -213,7 +268,8 @@ def create_vae_model(
         label_embedder_name="wpuq_month",
         label_embedder_args=emb_args,
         metrics_factory=make_metrics,
-        create_mask=False,
+        create_mask=is_monthly,
+        steps_per_day=steps_per_day,
     )
 
     num_params = count_parameters(pl_vae.vae)
@@ -375,7 +431,7 @@ def main():
     logging.info(f"Effective batch size: {effective_batch_size}")
 
     # Set up data module
-    train_loader, val_loader, sample_shape = setup_data_module(config)
+    train_loader, val_loader, sample_shape, data_collection = setup_data_module(config)
     data_module = SimpleDataModule(train_loader, val_loader)
 
     # Create model
