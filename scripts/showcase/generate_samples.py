@@ -24,6 +24,8 @@ import os
 import torch
 from tqdm import tqdm
 
+from smartmeterfm.conditions import WPuQCondition
+
 
 def generate_flow_samples(
     checkpoint_path: str,
@@ -77,11 +79,10 @@ def generate_flow_samples(
             remaining -= curr_batch_size
 
             # Create condition tensor
-            condition = {
-                "month": torch.full(
-                    (curr_batch_size, 1), month, dtype=torch.long, device=device
-                )
-            }
+            cond = WPuQCondition(month=month)
+            condition = cond.to_tensor_dict(
+                batch_size=curr_batch_size, device=device
+            )
 
             # Generate samples
             with torch.no_grad():
@@ -164,11 +165,10 @@ def generate_vae_samples(
             remaining -= curr_batch_size
 
             # Create condition tensor
-            condition = {
-                "month": torch.full(
-                    (curr_batch_size, 1), month, dtype=torch.long, device=device
-                )
-            }
+            cond = WPuQCondition(month=month)
+            condition = cond.to_tensor_dict(
+                batch_size=curr_batch_size, device=device
+            )
 
             with torch.no_grad():
                 # Sample from the VAE

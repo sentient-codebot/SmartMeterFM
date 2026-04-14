@@ -14,6 +14,7 @@ import pytorch_lightning as pl
 import torch
 from einops import rearrange
 
+from ...conditions import WPuQCondition
 from ...utils.configuration import SampleConfig
 from ..plot import plot_sampled_data_v2
 
@@ -126,11 +127,10 @@ class PeriodicSamplingCallback(pl.Callback):
                 while remaining > 0:
                     bs = min(batch_size, remaining)
                     x_t = torch.randn(bs, seq_len, num_ch, device=device)
-                    condition = {
-                        "month": torch.full(
-                            (bs, 1), month, dtype=torch.long, device=device
-                        )
-                    }
+                    cond = WPuQCondition(month=month)
+                    condition = cond.to_tensor_dict(
+                        batch_size=bs, device=device
+                    )
 
                     # For CFG wrapper, update labels per batch
                     if cfg_scale != 1.0:
