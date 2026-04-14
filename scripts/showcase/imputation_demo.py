@@ -132,8 +132,9 @@ def impute_with_flow(
     model.to(device)
 
     seq_length = observed_data.shape[0]
-    # Patchified shape for model: [B, patch_size, seq_length // patch_size]
-    patch_shape = (1, patch_size, seq_length // patch_size)
+    num_patches = seq_length // patch_size
+    # Model expects [B, num_patches, patch_size] (stored as [N, L, C])
+    patch_shape = (1, num_patches, patch_size)
 
     observed_real = observed_data.unsqueeze(0).to(device)  # [1, seq_length]
     mask_real = mask.unsqueeze(0).to(device)  # [1, seq_length]
@@ -154,14 +155,14 @@ def impute_with_flow(
                 x_t = x_t + velocity * dt
 
                 # Project in real temporal space: keep observed values fixed
-                # Unpatchify: [B, C, L] -> [B, 1, C*L] -> [B, seq_length]
-                x_t_real = rearrange(x_t, "b c l -> b (l c)")
+                # Unpatchify: [B, L, C] -> [B, L*C]
+                x_t_real = rearrange(x_t, "b l c -> b (l c)")
                 x_t_real = x_t_real * (1 - mask_real) + observed_real * mask_real
-                # Re-patchify: [B, seq_length] -> [B, C, L]
-                x_t = rearrange(x_t_real, "b (l c) -> b c l", c=patch_size)
+                # Re-patchify: [B, L*C] -> [B, L, C]
+                x_t = rearrange(x_t_real, "b (l c) -> b l c", c=patch_size)
 
             # Store result in real space
-            x_t_real = rearrange(x_t, "b c l -> b (l c)")
+            x_t_real = rearrange(x_t, "b l c -> b (l c)")
             all_imputed.append(x_t_real.cpu())
 
     return torch.cat(all_imputed, dim=0)
@@ -352,7 +353,7 @@ def main():
         month = test_labels["month"][idx].item()
 
         # Unpatchify to real temporal space: [C, L] -> [C*L]
-        original_real = rearrange(original_patched, "c l -> (l c)")  # [seq_length]
+        original_real = rearrange(original_patched, "l c -> (l c)")  # [seq_length]
         seq_length = original_real.shape[0]
 
         # Generate mask in real temporal space

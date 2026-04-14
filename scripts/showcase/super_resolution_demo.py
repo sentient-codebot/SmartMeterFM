@@ -126,9 +126,9 @@ def super_resolve_with_flow(
     model.eval()
     model.to(device)
 
-    # Patchified shape for model: [B, patch_size, num_patches]
+    # Model expects [B, num_patches, patch_size] (stored as [N, L, C])
     num_patches = target_seq_len // patch_size
-    patch_shape = (1, patch_size, num_patches)
+    patch_shape = (1, num_patches, patch_size)
 
     low_res_expanded = low_res_real.unsqueeze(0).to(device)  # [1, lr_seq_len]
 
@@ -149,7 +149,7 @@ def super_resolve_with_flow(
 
                 # Project in real temporal space
                 # Unpatchify: [B, C, L] -> [B, L*C]
-                x_t_real = rearrange(x_t, "b c l -> b (l c)")
+                x_t_real = rearrange(x_t, "b l c -> b (l c)")
 
                 # Downsample in real space and compare to low-res input
                 x_t_real_3d = x_t_real.unsqueeze(1)  # [B, 1, seq_len]
@@ -169,10 +169,10 @@ def super_resolve_with_flow(
                 x_t_real = x_t_real + correction_strength * correction
 
                 # Re-patchify: [B, seq_len] -> [B, C, L]
-                x_t = rearrange(x_t_real, "b (l c) -> b c l", c=patch_size)
+                x_t = rearrange(x_t_real, "b (l c) -> b l c", c=patch_size)
 
             # Store result in real space
-            x_t_real = rearrange(x_t, "b c l -> b (l c)")
+            x_t_real = rearrange(x_t, "b l c -> b (l c)")
             all_sr.append(x_t_real.cpu())
 
     return torch.cat(all_sr, dim=0)
@@ -356,7 +356,7 @@ def main():
         month = test_labels["month"][idx].item()
 
         # Unpatchify to real temporal space: [C, L] -> [C*L]
-        original_real = rearrange(original_patched, "c l -> (l c)")  # [seq_length]
+        original_real = rearrange(original_patched, "l c -> (l c)")  # [seq_length]
         seq_length = original_real.shape[0]
 
         # Downsample in real temporal space
