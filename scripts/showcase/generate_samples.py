@@ -86,11 +86,10 @@ def generate_flow_samples(
             # Generate samples
             with torch.no_grad():
                 # Get sample shape from model
-                sample_shape = (
-                    curr_batch_size,
-                    model.hparams.get("seq_length", 6),
-                    model.hparams.get("num_in_channel", 16),
-                )
+                # seq_length is stored inside model_config (TransformerConfig)
+                seq_len = model.hparams["model_config"].seq_length
+                num_ch = model.hparams["num_in_channel"]
+                sample_shape = (curr_batch_size, seq_len, num_ch)
 
                 # Sample from prior
                 x_0 = torch.randn(sample_shape, device=device)
