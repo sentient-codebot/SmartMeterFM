@@ -21,8 +21,12 @@ Example:
 
 import argparse
 import calendar
+import json
 import os
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import torch
 from einops import rearrange
 from tqdm import tqdm
@@ -31,6 +35,7 @@ from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.utils.configuration import DataConfig
+from smartmeterfm.utils.plot import plot_time_series_comparison_advanced
 
 
 def generate_mcar_mask(
@@ -282,6 +287,12 @@ def main():
         help="Random seed (default: 42)",
     )
     parser.add_argument(
+        "--num_example_figures",
+        type=int,
+        default=3,
+        help="Number of example figures to save (default: 3)",
+    )
+    parser.add_argument(
         "--output_dir",
         type=str,
         default="results/imputation",
@@ -349,6 +360,10 @@ def main():
     all_metrics = []
 
     print(f"\nRunning imputation on {len(test_profiles)} time series...")
+    figures_dir = os.path.join(args.output_dir, "figures")
+    os.makedirs(figures_dir, exist_ok=True)
+    example_indices = set(range(min(args.num_example_figures, len(test_profiles))))
+
     for idx in tqdm(range(len(test_profiles)), desc="Imputing"):
         original_patched = test_profiles[idx]  # [patch_size, num_patches] (patchified)
         month = test_labels["month"][idx].item()
@@ -409,6 +424,24 @@ def main():
         metrics["month"] = month
         all_metrics.append(metrics)
 
+        # Save example figure for selected indices
+        if idx in example_indices:
+            fig = plot_time_series_comparison_advanced(
+                generated=imputed_real,
+                real=original_real.unsqueeze(0),
+                output_path=os.path.join(
+                    figures_dir, f"imputation_example_{idx:03d}.png"
+                ),
+                title=(
+                    f"Imputation Example {idx} "
+                    f"(month={month}, {args.imputation_type}, "
+                    f"missing={args.missing_rate:.0%})"
+                ),
+                mask=mask,
+                overlap_generated_label="Imputed Samples",
+            )
+            plt.close(fig)
+
     # Aggregate results
     avg_metrics = {
         "mse": sum(m["mse"] for m in all_metrics) / len(all_metrics),
@@ -429,6 +462,19 @@ def main():
         results_path,
     )
 
+    # Save metrics as JSON
+    json_path = os.path.join(args.output_dir, "metrics.json")
+    with open(json_path, "w") as f:
+        json.dump(
+            {
+                "avg_metrics": avg_metrics,
+                "args": vars(args),
+                "per_series_metrics": all_metrics,
+            },
+            f,
+            indent=2,
+        )
+
     # Print summary
     print("\n" + "=" * 50)
     print("Imputation Results Summary")
@@ -444,6 +490,8 @@ def main():
     print(f"Average Uncertainty: {avg_metrics['uncertainty']:.6f}")
     print("=" * 50)
     print(f"\nResults saved to {results_path}")
+    print(f"Metrics saved to {json_path}")
+    print(f"Example figures saved to {figures_dir}")
 
 
 if __name__ == "__main__":

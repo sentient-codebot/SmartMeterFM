@@ -17,8 +17,13 @@ Example:
 
 import argparse
 import calendar
+import json
 import os
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -229,6 +234,58 @@ def evaluate_super_resolution(
     }
 
 
+def plot_sr_example(
+    original_real: torch.Tensor,
+    sr_samples_real: torch.Tensor,
+    baseline_real: torch.Tensor,
+    output_path: str,
+    title: str = "Super-Resolution Example",
+):
+    """Plot a single super-resolution example with original, SR, and baseline.
+
+    Args:
+        original_real: Original HR time series [seq_length].
+        sr_samples_real: SR samples [num_samples, seq_length].
+        baseline_real: Baseline (linear interp) HR series [seq_length].
+        output_path: Path to save the figure.
+        title: Figure title.
+    """
+    with plt.style.context("smartmeterfm.utils.article_compatible"):
+        fig, ax = plt.subplots(figsize=(12, 4))
+
+        t = np.arange(original_real.shape[0])
+        sr_mean = sr_samples_real.mean(dim=0).numpy()
+        sr_std = sr_samples_real.std(dim=0).numpy()
+
+        ax.plot(
+            t, original_real.numpy(), label="Original HR",
+            color="tab:blue", linewidth=1.5,
+        )
+        ax.plot(
+            t, sr_mean, label="SR Mean",
+            color="tab:orange", linewidth=1.5,
+        )
+        ax.fill_between(
+            t, sr_mean - sr_std, sr_mean + sr_std,
+            color="tab:orange", alpha=0.2, label="SR \u00b11\u03c3",
+        )
+        ax.plot(
+            t, baseline_real.numpy(), label="Baseline (linear)",
+            color="tab:green", linewidth=1.0, linestyle="--",
+        )
+
+        ax.set_xlabel("Time Step [-]")
+        ax.set_ylabel("Normalized Power [-]")
+        ax.set_xlim(0, len(t) - 1)
+        ax.set_title(title)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Demonstrate super-resolution using Flow Matching model"
@@ -282,6 +339,12 @@ def main():
         type=int,
         default=42,
         help="Random seed (default: 42)",
+    )
+    parser.add_argument(
+        "--num_example_figures",
+        type=int,
+        default=3,
+        help="Number of example figures to save (default: 3)",
     )
     parser.add_argument(
         "--output_dir",
@@ -352,6 +415,10 @@ def main():
     print(
         f"\nRunning {args.scale_factor}x super-resolution on {len(test_profiles)} time series..."
     )
+    figures_dir = os.path.join(args.output_dir, "figures")
+    os.makedirs(figures_dir, exist_ok=True)
+    example_indices = set(range(min(args.num_example_figures, len(test_profiles))))
+
     for idx in tqdm(range(len(test_profiles)), desc="Super-resolving"):
         original_patched = test_profiles[idx]  # [patch_size, num_patches] (patchified)
         month = test_labels["month"][idx].item()
@@ -410,6 +477,21 @@ def main():
         metrics["month"] = month
         all_metrics.append(metrics)
 
+        # Save example figure for selected indices
+        if idx in example_indices:
+            plot_sr_example(
+                original_real=original_real,
+                sr_samples_real=sr_samples_real,
+                baseline_real=baseline_real,
+                output_path=os.path.join(
+                    figures_dir, f"sr_example_{idx:03d}.png"
+                ),
+                title=(
+                    f"Super-Resolution Example {idx} "
+                    f"(month={month}, {args.scale_factor}x)"
+                ),
+            )
+
     # Aggregate results
     avg_metrics = {
         key: sum(m[key] for m in all_metrics) / len(all_metrics)
@@ -437,6 +519,19 @@ def main():
         results_path,
     )
 
+    # Save metrics as JSON
+    json_path = os.path.join(args.output_dir, "metrics.json")
+    with open(json_path, "w") as f:
+        json.dump(
+            {
+                "avg_metrics": avg_metrics,
+                "args": vars(args),
+                "per_series_metrics": all_metrics,
+            },
+            f,
+            indent=2,
+        )
+
     # Print summary
     print("\n" + "=" * 60)
     print(f"Super-Resolution Results Summary ({args.scale_factor}x)")
@@ -460,6 +555,8 @@ def main():
     print(f"Improvement over baseline: {avg_metrics['improvement_mse_pct']:.1f}% (MSE)")
     print("=" * 60)
     print(f"\nResults saved to {results_path}")
+    print(f"Metrics saved to {json_path}")
+    print(f"Example figures saved to {figures_dir}")
 
 
 if __name__ == "__main__":
