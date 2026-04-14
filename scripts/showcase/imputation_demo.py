@@ -231,7 +231,7 @@ def main():
         "--imputation_type",
         type=str,
         choices=["mcar", "mnar_consecutive"],
-        default="mcar",
+        default="mnar_consecutive",
         help="Type of missing data pattern",
     )
     parser.add_argument(

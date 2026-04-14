@@ -26,6 +26,8 @@ import os
 
 import torch
 
+from smartmeterfm.data_modules.heat_pump import WPuQ
+from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.utils.configuration import ExperimentConfig
 from smartmeterfm.utils.eval import (
@@ -80,8 +82,14 @@ def load_test_data(config: ExperimentConfig) -> tuple[torch.Tensor, torch.Tensor
     Returns:
         Tuple of (test_profiles, test_month_labels)
     """
-    logging.info("Loading test data from WPuQHousehold data module...")
-    data_collection = WPuQHousehold(config.data)
+    dataset_name = getattr(config.data, "dataset", "wpuq")
+    logging.info(f"Loading test data from {dataset_name} data module...")
+    if dataset_name == "lcl_electricity":
+        data_collection = LCLElectricity(config.data)
+    elif dataset_name == "wpuq_household":
+        data_collection = WPuQHousehold(config.data)
+    else:
+        data_collection = WPuQ(config.data)
 
     test_profiles = data_collection.dataset.profile["test"]  # [N, seq_len, channels]
     test_labels = data_collection.dataset.label["test"]

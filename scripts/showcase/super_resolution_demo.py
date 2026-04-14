@@ -79,9 +79,10 @@ def upsample_linear(data: torch.Tensor, scale_factor: int) -> torch.Tensor:
     # [batch, seq_len, channels] -> [batch, channels, seq_len]
     data = data.permute(0, 2, 1)
 
-    # Linear interpolation
+    # Linear interpolation to target size (handles non-divisible lengths)
+    target_len = data.shape[2] * scale_factor
     data_hr = F.interpolate(
-        data, scale_factor=scale_factor, mode="linear", align_corners=False
+        data, size=target_len, mode="linear", align_corners=False
     )
 
     # [batch, channels, seq_len_hr] -> [batch, seq_len_hr, channels]
@@ -98,6 +99,7 @@ def super_resolve_with_flow(
     low_res_data: torch.Tensor,
     scale_factor: int,
     condition: dict,
+    target_seq_len: int,
     num_samples: int = 10,
     num_steps: int = 100,
     device: str = "cuda",
@@ -109,6 +111,7 @@ def super_resolve_with_flow(
         low_res_data: Low-resolution time series.
         scale_factor: Upsampling factor.
         condition: Conditioning information.
+        target_seq_len: Original high-resolution sequence length.
         num_samples: Number of SR samples to generate.
         num_steps: Number of ODE integration steps.
         device: Device to use.
@@ -122,9 +125,8 @@ def super_resolve_with_flow(
     # Get super-resolution operator
     sr_op = get_operator(name="super_resolution", scale_factor=scale_factor)
 
-    # Target high-res shape
-    hr_seq_len = low_res_data.shape[0] * scale_factor
-    hr_shape = (hr_seq_len, low_res_data.shape[1])
+    # Target high-res shape (use original size, not low_res * scale_factor)
+    hr_shape = (target_seq_len, low_res_data.shape[1])
 
     all_sr = []
 
@@ -153,8 +155,13 @@ def super_resolve_with_flow(
 
                 # Compute correction
                 error = low_res_expanded - x_t_down
-                # Distribute error back to high-res (simple nearest neighbor)
-                correction = error.repeat_interleave(scale_factor, dim=1)
+                # Distribute error back to high-res via interpolation
+                # (handles non-divisible lengths correctly)
+                error_t = error.permute(0, 2, 1)  # [B, C, lr_len]
+                correction_t = F.interpolate(
+                    error_t, size=target_seq_len, mode="nearest"
+                )
+                correction = correction_t.permute(0, 2, 1)  # [B, hr_len, C]
 
                 # Apply correction with decreasing strength as t increases
                 correction_strength = max(0, 1 - step / num_steps)
@@ -345,7 +352,10 @@ def main():
         low_res = downsample(original_hr, args.scale_factor)
 
         # Baseline: linear interpolation
+        target_seq_len = original_hr.shape[0]
         baseline_hr = upsample_linear(low_res, args.scale_factor)
+        # Trim or pad baseline to match original length
+        baseline_hr = baseline_hr[:target_seq_len]
 
         # Create condition
         condition = {
@@ -358,6 +368,7 @@ def main():
             low_res,
             args.scale_factor,
             condition,
+            target_seq_len=target_seq_len,
             num_samples=args.num_samples,
             num_steps=args.num_steps,
             device=args.device,

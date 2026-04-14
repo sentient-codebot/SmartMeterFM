@@ -20,6 +20,8 @@ import numpy as np
 import torch
 from einops import rearrange
 
+from smartmeterfm.data_modules.heat_pump import WPuQ
+from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.utils.configuration import ExperimentConfig
 from smartmeterfm.utils.plot import plot_time_series_comparison_advanced
@@ -64,7 +66,13 @@ def load_generated_samples(samples_dir: str) -> dict[int, torch.Tensor]:
 
 
 def load_test_data(config: ExperimentConfig):
-    data_collection = WPuQHousehold(config.data)
+    dataset_name = getattr(config.data, "dataset", "wpuq")
+    if dataset_name == "lcl_electricity":
+        data_collection = LCLElectricity(config.data)
+    elif dataset_name == "wpuq_household":
+        data_collection = WPuQHousehold(config.data)
+    else:
+        data_collection = WPuQ(config.data)
     test_profiles = data_collection.dataset.profile["test"]
     test_labels = data_collection.dataset.label["test"]
     return test_profiles, test_labels["month"]
