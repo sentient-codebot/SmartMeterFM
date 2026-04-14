@@ -147,22 +147,22 @@ def setup_data_module(config: ExperimentConfig):
 
     if dataset_name == "wpuq_household":
         logging.info("Setting up WPuQ Household data module...")
-        wpuq_data = WPuQHousehold(data_config)
+        data_collection = WPuQHousehold(data_config)
     elif dataset_name == "lcl_electricity":
         logging.info("Setting up LCL Electricity data module...")
         from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 
-        wpuq_data = LCLElectricity(data_config)
+        data_collection = LCLElectricity(data_config)
     else:
         logging.info("Setting up WPuQ Heat Pump data module...")
-        wpuq_data = WPuQ(data_config)
+        data_collection = WPuQ(data_config)
 
     # Get train and validation data
-    train_profiles = wpuq_data.dataset.profile["train"]  # [N, seq_len, channels]
-    val_profiles = wpuq_data.dataset.profile["val"]
+    train_profiles = data_collection.dataset.profile["train"]  # [N, seq_len, channels]
+    val_profiles = data_collection.dataset.profile["val"]
 
-    train_labels = wpuq_data.dataset.label["train"]
-    val_labels = wpuq_data.dataset.label["val"]
+    train_labels = data_collection.dataset.label["train"]
+    val_labels = data_collection.dataset.label["val"]
 
     # Create PyTorch datasets
     train_dataset = TensorDataset(
@@ -199,7 +199,7 @@ def setup_data_module(config: ExperimentConfig):
         f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}"
     )
 
-    return train_loader, val_loader, sample_shape, wpuq_data
+    return train_loader, val_loader, sample_shape, data_collection
 
 
 def setup_metrics():
@@ -263,7 +263,11 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
 
 
 def setup_trainer(
-    args, config, num_gpus, accumulate_grad_batches, use_mps=False,
+    args,
+    config,
+    num_gpus,
+    accumulate_grad_batches,
+    use_mps=False,
     profile_inverse_transform=None,
 ):
     """Set up the PyTorch Lightning trainer."""
@@ -455,7 +459,11 @@ def main():
 
     # Set up trainer
     trainer = setup_trainer(
-        args, config, num_gpus, accumulate_grad_batches, use_mps=use_mps,
+        args,
+        config,
+        num_gpus,
+        accumulate_grad_batches,
+        use_mps=use_mps,
         profile_inverse_transform=data_collection.profile_inverse_transform,
     )
 
