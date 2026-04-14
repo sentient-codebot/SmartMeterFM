@@ -166,6 +166,10 @@ class WPuQCondition(SampleCondition):
     All fields are optional (``None`` = unconditional for that field).
     Month uses 0-indexed values (0 = January, 11 = December).
     Season is auto-derived from month when not set explicitly.
+
+    For monthly-segmented data, ``year`` is stored alongside ``month`` so
+    that ``first_day_of_week`` and ``month_length`` can be derived via
+    ``calendar.monthrange(year, month+1)``.
     """
 
     month: Annotated[int | None, ConditionFieldMeta()] = None
@@ -175,6 +179,9 @@ class WPuQCondition(SampleCondition):
     ] = None
     day_type: Annotated[int | None, ConditionFieldMeta()] = None
     household_id: Annotated[int | None, ConditionFieldMeta()] = None
+    year: Annotated[int | None, ConditionFieldMeta()] = None
+    first_day_of_week: Annotated[int | None, ConditionFieldMeta()] = None  # 0-6
+    month_length: Annotated[int | None, ConditionFieldMeta()] = None  # 0-3
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> WPuQCondition:
@@ -184,6 +191,12 @@ class WPuQCondition(SampleCondition):
             raise ValueError(f"season must be 0-3, got {self.season}")
         if self.day_type is not None and not (0 <= self.day_type <= 1):
             raise ValueError(f"day_type must be 0 or 1, got {self.day_type}")
+        if self.first_day_of_week is not None and not (0 <= self.first_day_of_week <= 6):
+            raise ValueError(
+                f"first_day_of_week must be 0-6, got {self.first_day_of_week}"
+            )
+        if self.month_length is not None and not (0 <= self.month_length <= 3):
+            raise ValueError(f"month_length must be 0-3, got {self.month_length}")
         return self
 
 
@@ -192,12 +205,25 @@ class LCLCondition(SampleCondition):
 
     Currently month-only, matching the LCL data module.  Future LCL-specific
     conditions (tariff type, Acorn group, etc.) can be added here.
+
+    For monthly-segmented data, ``year`` is stored alongside ``month`` so
+    that ``first_day_of_week`` and ``month_length`` can be derived via
+    ``calendar.monthrange(year, month+1)``.
     """
 
     month: Annotated[int | None, ConditionFieldMeta()] = None
+    year: Annotated[int | None, ConditionFieldMeta()] = None
+    first_day_of_week: Annotated[int | None, ConditionFieldMeta()] = None  # 0-6
+    month_length: Annotated[int | None, ConditionFieldMeta()] = None  # 0-3
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> LCLCondition:
         if self.month is not None and not (0 <= self.month <= 11):
             raise ValueError(f"month must be 0-11, got {self.month}")
+        if self.first_day_of_week is not None and not (0 <= self.first_day_of_week <= 6):
+            raise ValueError(
+                f"first_day_of_week must be 0-6, got {self.first_day_of_week}"
+            )
+        if self.month_length is not None and not (0 <= self.month_length <= 3):
+            raise ValueError(f"month_length must be 0-3, got {self.month_length}")
         return self

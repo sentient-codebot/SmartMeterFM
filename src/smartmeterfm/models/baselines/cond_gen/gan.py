@@ -494,6 +494,7 @@ class GANModelPL(pl.LightningModule):
         label_embedder_args: dict | None = None,
         metrics_factory: Callable | None = None,
         create_mask: bool = False,
+        steps_per_day: int = 96,
         # GAN-specific hyperparameters
         paradigm: Literal["vanilla", "wgan"] = "vanilla",
         generator_lr: float = 2e-4,
@@ -550,6 +551,7 @@ class GANModelPL(pl.LightningModule):
         self.num_in_channel = num_in_channel
         self.train_config = train_config
         self.create_mask = create_mask
+        self.steps_per_day = steps_per_day
         self.condition_dim = latent_dim
 
         # GAN hyperparameters
@@ -646,9 +648,11 @@ class GANModelPL(pl.LightningModule):
         )
 
     @staticmethod
-    def _convert_offset_month_length(month_length: int | Tensor, offset: int):
+    def _convert_offset_month_length(
+        month_length: int | Tensor, offset: int, steps_per_day: int = 96
+    ):
         """Convert month length with offset (same as FlowModelPL)."""
-        return (month_length + offset) * 96
+        return (month_length + offset) * steps_per_day
 
     @staticmethod
     def _create_loss_mask(valid_length: Tensor, full_length: int) -> Tensor:

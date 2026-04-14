@@ -62,6 +62,7 @@ class BaselineDataLoader:
         missing_rate=0.30,
         scale_factor=None,
         imputation_type: Literal["mcar", "mnar_consecutive"] = "mcar",
+        steps_per_day: int = 96,
     ):
         """
         Initialize baseline dataloader wrapper.
@@ -71,6 +72,7 @@ class BaselineDataLoader:
             task_type: "imputation" or "super_resolution"
             missing_rate: Missing rate for imputation training masks
             scale_factor: Scale factor for super-resolution downsampling (required for SR)
+            steps_per_day: Number of timesteps per day at the target resolution.
         """
         self.original_dataloader = original_dataloader
         self.task_type = task_type
@@ -78,6 +80,7 @@ class BaselineDataLoader:
         self.scale_factor = scale_factor
         self._global_sample_idx = 0
         self.imputation_type = imputation_type
+        self.steps_per_day = steps_per_day
 
         if task_type == "super_resolution" and scale_factor is None:
             raise ValueError("scale_factor is required for super_resolution task")
@@ -97,7 +100,7 @@ class BaselineDataLoader:
                 sample_labels = {key: labels[key][i] for key in labels.keys()}
 
                 # Get valid length
-                valid_steps = int(sample_labels["month_length"].item() + 28) * 96
+                valid_steps = int(sample_labels["month_length"].item() + 28) * self.steps_per_day
 
                 # Flatten but keep full length
                 ts_flat = profile.flatten()

@@ -424,8 +424,10 @@ class VAEModelPL(pl.LightningModule):
         label_embedder_args: dict | None = None,
         metrics_factory: Callable | None = None,
         create_mask: bool = False,
+        steps_per_day: int = 96,
     ):
         super().__init__()
+        self.steps_per_day = steps_per_day
 
         # Initialize embedders (similar to FlowModelPL)
         label_embedder = None
@@ -523,9 +525,11 @@ class VAEModelPL(pl.LightningModule):
             raise AttributeError("label_embedder not provided")
 
     @staticmethod
-    def _convert_offset_month_length(month_length: int | Tensor, offset: int):
+    def _convert_offset_month_length(
+        month_length: int | Tensor, offset: int, steps_per_day: int = 96
+    ):
         """Convert month length with offset (same as FlowModelPL)."""
-        return (month_length + offset) * 96
+        return (month_length + offset) * steps_per_day
 
     @staticmethod
     def _create_loss_mask(valid_length: Tensor, full_length: int) -> Tensor:
@@ -599,7 +603,7 @@ class VAEModelPL(pl.LightningModule):
         loss_mask = None
         if self.create_mask and "month_length" in condition:
             valid_length = self._convert_offset_month_length(
-                condition["month_length"], 28
+                condition["month_length"], 28, self.steps_per_day
             ).squeeze(1)
             loss_mask = self._create_loss_mask(
                 valid_length=valid_length,
@@ -669,7 +673,7 @@ class VAEModelPL(pl.LightningModule):
         loss_mask = None
         if self.create_mask and "month_length" in condition:
             valid_length = self._convert_offset_month_length(
-                condition["month_length"], 28
+                condition["month_length"], 28, self.steps_per_day
             ).squeeze(1)
             loss_mask = self._create_loss_mask(
                 valid_length=valid_length,

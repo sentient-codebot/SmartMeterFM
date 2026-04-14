@@ -523,8 +523,10 @@ class FlowModelPL(pl.LightningModule):
         context_embedder_args: dict | None = None,
         metrics_factory: Callable | None = None,
         create_mask: bool = False,
+        steps_per_day: int = 96,
     ):
         super().__init__()
+        self.steps_per_day = steps_per_day
         label_embedder = None
         if label_embedder_name is not None:
             label_embedder_args = label_embedder_args or {}
@@ -593,9 +595,11 @@ class FlowModelPL(pl.LightningModule):
         return optimizer
 
     @staticmethod
-    def _convert_offset_month_length(month_length: int | Tensor, offset: int):
-        "return `(month_length+offset)*96"
-        return (month_length + offset) * 96
+    def _convert_offset_month_length(
+        month_length: int | Tensor, offset: int, steps_per_day: int = 96
+    ):
+        "return `(month_length+offset)*steps_per_day`"
+        return (month_length + offset) * steps_per_day
 
     @staticmethod
     def _create_loss_mask(valid_length: Tensor, full_length: int) -> Tensor:
@@ -627,14 +631,14 @@ class FlowModelPL(pl.LightningModule):
         if "first_day_of_week" in condition:
             start_pos = get_start_pos(
                 condition["first_day_of_week"].squeeze(1),  # [batch]
-                steps_per_day=96,
+                steps_per_day=self.steps_per_day,
             )  # [batch]
         else:
             start_pos = 0
-        # valid length mas
+        # valid length mask
         if self.create_mask:
             valid_length = self._convert_offset_month_length(
-                condition["month_length"], 28
+                condition["month_length"], 28, self.steps_per_day
             ).squeeze(1)
             loss_mask = self._create_loss_mask(
                 valid_length=valid_length,
@@ -689,9 +693,17 @@ class FlowModelPL(pl.LightningModule):
             PredictionType.X0: sample.x_0,
             PredictionType.X1: sample.x_1,
         }[self.prediction_type]
+        # get start position
+        if "first_day_of_week" in condition:
+            start_pos = get_start_pos(
+                condition["first_day_of_week"].squeeze(1),
+                steps_per_day=self.steps_per_day,
+            )
+        else:
+            start_pos = 0
         if self.create_mask:
             valid_length = self._convert_offset_month_length(
-                condition["month_length"], 28
+                condition["month_length"], 28, self.steps_per_day
             ).squeeze(1)
             loss_mask = self._create_loss_mask(
                 valid_length=valid_length,
@@ -704,14 +716,17 @@ class FlowModelPL(pl.LightningModule):
                 sequence=profile.shape[1],
             )
             model_out = self.model(
-                x=sample.x_t, t=t, c=condition, valid_length=valid_length
+                x=sample.x_t, t=t, start_pos=start_pos,
+                c=condition, valid_length=valid_length,
             )
             cm_loss = (
                 torch.pow((model_out - target) * loss_mask, 2).sum() / loss_mask.sum()
             )  # CM loss
         else:
             cm_loss = torch.pow(
-                self.model(x=sample.x_t, t=t, c=condition) - target, 2
+                self.model(
+                    x=sample.x_t, t=t, start_pos=start_pos, c=condition
+                ) - target, 2
             ).mean()  # CM loss
         self.log(
             "Validation/loss",
