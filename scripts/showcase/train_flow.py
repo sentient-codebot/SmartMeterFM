@@ -147,6 +147,11 @@ def setup_data_module(config: ExperimentConfig):
     if dataset_name == "wpuq_household":
         logging.info("Setting up WPuQ Household data module...")
         wpuq_data = WPuQHousehold(data_config)
+    elif dataset_name == "lcl_electricity":
+        logging.info("Setting up LCL Electricity data module...")
+        from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
+
+        wpuq_data = LCLElectricity(data_config)
     else:
         logging.info("Setting up WPuQ Heat Pump data module...")
         wpuq_data = WPuQ(data_config)
