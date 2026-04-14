@@ -8,21 +8,36 @@ Available from Zenodo (CC-BY 4.0): https://zenodo.org/records/4656091
 ~5,560 households at half-hourly (30-min) resolution, Nov 2011 – Feb 2014.
 File format: ``.tsf`` (Monash Time Series Forecasting format).
 Each line: ``series_name:start_timestamp:val1,val2,...`` — one contiguous
-half-hourly sequence per household. Values are energy in kWh per half-hour.
+half-hourly sequence per household. Raw values are energy in **kWh per
+half-hour**.
+
+Units
+~~~~~
+The raw ``.tsf`` values are energy (kWh per half-hour interval). During
+preprocessing, they are converted to average power in **kW** by dividing by
+the interval duration in hours (0.5 h):
+
+    power_kW = energy_kWh / 0.5 h = energy_kWh × 2
+
+All preprocessed NPZ files and downstream data therefore have units of **kW**.
+This is consistent with the WPuQ datasets, which also store power values
+(albeit in W rather than kW).
 
 Preprocessing (PreLCLElectricity)
 ---------------------------------
 1. Parse ``.tsf`` file: extract per-household start timestamps and value arrays.
 2. For each household, compute a half-hourly datetime index from its start
    timestamp and slice values by calendar month for the target year.
-3. Each complete household-month becomes one sample ``[1, timesteps_in_month]``
+3. Convert from kWh/half-hour to kW (multiply by 2).
+4. Each complete household-month becomes one sample ``[1, timesteps_in_month]``
    (e.g. 31 × 48 = 1488 for January).  Incomplete months are skipped.
-4. Shuffle and split 50/25/25 into train/val/test via ``split_and_save_npz``.
-5. Save as ``lcl_electricity_{year}_{train,val,test}.npz``.
+5. Shuffle and split 50/25/25 into train/val/test via ``split_and_save_npz``.
+6. Save as ``lcl_electricity_{year}_{train,val,test}.npz``.
 
 Loading (LCLElectricity)
 ------------------------
 - Loads preprocessed NPZ files for years 2012–2013.
+- Values are average power in **kW** (converted from kWh/hh during preprocessing).
 - Optional resolution downsampling via avg_pool1d (30min → 1h).
 - Pads all monthly samples to a fixed length (31 days at target resolution).
   At 30min resolution: 31 × 48 = 1488 timesteps.
@@ -111,7 +126,8 @@ class PreLCLElectricity:
     """Preprocess LCL smart meter .tsf data into monthly NPZ files.
 
     Reads the Monash .tsf file from the Zenodo cleaned dataset, slices each
-    household's contiguous half-hourly series by calendar month, and saves
+    household's contiguous half-hourly series by calendar month, converts
+    from kWh/half-hour to average power in **kW** (×2), and saves
     train/val/test splits as compressed NPZ.
 
     train/val/test ratio: 0.5 / 0.25 / 0.25
@@ -195,6 +211,9 @@ class PreLCLElectricity:
             if not np.isfinite(segment).all():
                 continue
 
+            # Convert kWh/half-hour → kW: power = energy / time = kWh / 0.5h
+            segment = segment * (3600 / RES_SECOND)  # = × 2 for 30-min intervals
+
             out[str(month)].append(segment.reshape(1, -1))
 
 
@@ -204,7 +223,8 @@ class LCLElectricity(WPuQHousehold):
     Inherits the monthly-segment loading pattern from WPuQHousehold.
     Only the class attributes differ (prefix, base resolution, years).
 
-    Supported resolutions: "30min" (native), "1h".
+    Values are average power in **kW** (converted from kWh/half-hour during
+    preprocessing).  Supported resolutions: "30min" (native), "1h".
     """
 
     common_prefix = "lcl_electricity"

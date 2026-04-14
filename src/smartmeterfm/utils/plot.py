@@ -18,6 +18,7 @@ def plot_sampled_data_v2(
     save_filepath: str | None = None,
     num_samples_to_plot: int | None = 1000,
     seed=0000,
+    ylabel: str = "Power [kW]",
 ):
     """this plots only one season"""
     # alpha adjustment factor
@@ -97,7 +98,7 @@ def plot_sampled_data_v2(
             )
 
         ax_sample.set_xlabel("Time Step [-]")
-        ax_sample.set_ylabel("Power [W]")
+        ax_sample.set_ylabel(ylabel)
         ax_sample.set_xlim([0, data_vec_dim - 1])
         # ax_sample.set_ylim([common_minimum, common_maximum])
         ax_sample.set_title(f"{name}")

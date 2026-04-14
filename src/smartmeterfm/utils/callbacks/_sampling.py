@@ -7,6 +7,7 @@ saves them to disk, and logs visualization figures to wandb/mlflow.
 import copy
 import logging
 import os
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
 import matplotlib
@@ -38,6 +39,7 @@ class PeriodicSamplingCallback(pl.Callback):
         output_dir: str,
         log_wandb: bool = False,
         log_mlflow: bool = False,
+        profile_inverse_transform: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ):
         super().__init__()
         self.sample_every = sample_every
@@ -46,6 +48,7 @@ class PeriodicSamplingCallback(pl.Callback):
         self.output_dir = output_dir
         self.log_wandb = log_wandb
         self.log_mlflow = log_mlflow
+        self._inverse_transform = profile_inverse_transform
 
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._pending: Future | None = None
@@ -128,9 +131,7 @@ class PeriodicSamplingCallback(pl.Callback):
                     bs = min(batch_size, remaining)
                     x_t = torch.randn(bs, seq_len, num_ch, device=device)
                     cond = WPuQCondition(month=month)
-                    condition = cond.to_tensor_dict(
-                        batch_size=bs, device=device
-                    )
+                    condition = cond.to_tensor_dict(batch_size=bs, device=device)
 
                     # For CFG wrapper, update labels per batch
                     if cfg_scale != 1.0:
@@ -167,14 +168,20 @@ class PeriodicSamplingCallback(pl.Callback):
         torch.save(samples_by_month, os.path.join(step_dir, "samples.pt"))
         logger.info("Saved samples at step %d to %s", step, step_dir)
 
-        # Plot
+        # Plot — denormalize samples back to original units (e.g. kW)
         matplotlib.use("Agg")
         flat_samples = {}
         for month, tensor in samples_by_month.items():
-            if tensor.dim() == 3:
-                flat = rearrange(tensor, "b s c -> b (s c)")
+            if self._inverse_transform is not None:
+                # Model output is [b, seq_len, num_ch]; transforms expect [b, ch, seq_len]
+                if tensor.dim() == 3:
+                    tensor = rearrange(tensor, "b l c -> b c l")
+                flat = self._inverse_transform(tensor).squeeze(1)
             else:
-                flat = tensor
+                if tensor.dim() == 3:
+                    flat = rearrange(tensor, "b s c -> b (s c)")
+                else:
+                    flat = tensor
             flat_samples[f"Month {month + 1}"] = flat.numpy()
 
         fig_path = os.path.join(step_dir, "samples_overview.png")
@@ -186,9 +193,7 @@ class PeriodicSamplingCallback(pl.Callback):
                 import wandb
 
                 if wandb.run:
-                    wandb.log(
-                        {"Samples/overview": wandb.Image(fig_path)}, step=step
-                    )
+                    wandb.log({"Samples/overview": wandb.Image(fig_path)}, step=step)
             except Exception as e:
                 logger.warning("Failed to log samples to wandb: %s", e)
 

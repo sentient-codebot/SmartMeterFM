@@ -80,9 +80,7 @@ def generate_flow_samples(
 
             # Create condition tensor
             cond = WPuQCondition(month=month)
-            condition = cond.to_tensor_dict(
-                batch_size=curr_batch_size, device=device
-            )
+            condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 
             # Generate samples
             with torch.no_grad():
@@ -166,9 +164,7 @@ def generate_vae_samples(
 
             # Create condition tensor
             cond = WPuQCondition(month=month)
-            condition = cond.to_tensor_dict(
-                batch_size=curr_batch_size, device=device
-            )
+            condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 
             with torch.no_grad():
                 # Sample from the VAE

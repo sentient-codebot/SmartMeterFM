@@ -95,7 +95,7 @@ class PreHeatPump:
     col_names = [
         "index",  # timestamp
         "PF_TOT",  # power factor total
-        "P_TOT",  # active power total
+        "P_TOT",  # active power total, in Watts
     ]
 
     def __init__(

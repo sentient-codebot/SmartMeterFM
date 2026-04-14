@@ -6,7 +6,12 @@ Dataset
 Source: WPuQ (Wärmepumpen-Umfeldquartier) dataset from Germany.
 HDF5 path: ``{NO_PV,WITH_PV}/{SFH*}/HOUSEHOLD/table`` in ``{year}_data_1min.hdf5``.
 Houses: ~38 single-family homes (SFH), from both NO_PV and WITH_PV groups.
-Field used: ``P_TOT`` (total active power, in Watts).
+Field used: ``P_TOT`` (total active power, in **Watts**).
+
+Units
+~~~~~
+All values are instantaneous active power in **W** (Watts), read directly
+from the HDF5 source.  No unit conversion is applied during preprocessing.
 
 Preprocessing (PreWPuQHousehold)
 --------------------------------

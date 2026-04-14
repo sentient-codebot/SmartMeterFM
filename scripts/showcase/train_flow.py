@@ -140,7 +140,7 @@ def setup_data_module(config: ExperimentConfig):
         config: Experiment configuration.
 
     Returns:
-        Tuple of (train_dataloader, val_dataloader, sample_shape)
+        Tuple of (train_dataloader, val_dataloader, sample_shape, data_collection)
     """
     data_config = config.data
     dataset_name = getattr(data_config, "dataset", "wpuq")
@@ -199,7 +199,7 @@ def setup_data_module(config: ExperimentConfig):
         f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}"
     )
 
-    return train_loader, val_loader, sample_shape
+    return train_loader, val_loader, sample_shape, wpuq_data
 
 
 def setup_metrics():
@@ -262,7 +262,10 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
     return pl_flow
 
 
-def setup_trainer(args, config, num_gpus, accumulate_grad_batches, use_mps=False):
+def setup_trainer(
+    args, config, num_gpus, accumulate_grad_batches, use_mps=False,
+    profile_inverse_transform=None,
+):
     """Set up the PyTorch Lightning trainer."""
     # Set up DDP strategy
     ddp_strategy = "auto"
@@ -291,6 +294,7 @@ def setup_trainer(args, config, num_gpus, accumulate_grad_batches, use_mps=False
         output_dir=f"results/samples/{config.time_id}",
         log_wandb=config.log_wandb,
         log_mlflow=config.log_mlflow,
+        profile_inverse_transform=profile_inverse_transform,
     )
 
     callbacks = [checkpoint_callback, lr_monitor, sampling_callback]
@@ -434,7 +438,7 @@ def main():
     logging.info(f"Effective batch size: {effective_batch_size}")
 
     # Set up data module
-    train_loader, val_loader, sample_shape = setup_data_module(config)
+    train_loader, val_loader, sample_shape, data_collection = setup_data_module(config)
     data_module = WPuQDataModule(train_loader, val_loader)
 
     # Create model
@@ -451,7 +455,8 @@ def main():
 
     # Set up trainer
     trainer = setup_trainer(
-        args, config, num_gpus, accumulate_grad_batches, use_mps=use_mps
+        args, config, num_gpus, accumulate_grad_batches, use_mps=use_mps,
+        profile_inverse_transform=data_collection.profile_inverse_transform,
     )
 
     # Save configuration

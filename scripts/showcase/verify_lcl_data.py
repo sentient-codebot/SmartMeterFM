@@ -3,6 +3,10 @@
 Loads the LCL dataset in raw (un-normalized, un-vectorized) form, produces
 four diagnostic figures and a statistics table to stdout.
 
+Note: LCL values are average power in **kW** (converted from kWh/half-hour
+during preprocessing).  To recover energy in kWh, multiply by the interval
+duration (0.5 h).
+
 Usage:
     uv run python scripts/showcase/verify_lcl_data.py
 """
@@ -95,8 +99,9 @@ def print_statistics(profiles, labels):
         if mask.sum() == 0:
             continue
         month_profiles = profiles[mask]
-        # Total consumption per household-month (sum of half-hourly kWh)
-        totals = month_profiles.sum(axis=1)
+        # Total consumption per household-month in kWh.
+        # Values are in kW; multiply by interval duration (0.5 h) to get kWh.
+        totals = month_profiles.sum(axis=1) * 0.5
         print(
             f"{MONTH_NAMES[m]:<8} {mask.sum():>7d} {totals.mean():>10.1f} "
             f"{totals.std():>10.1f} {np.median(totals):>10.1f} "
@@ -104,16 +109,14 @@ def print_statistics(profiles, labels):
         )
 
     print("-" * 80)
-    totals_all = profiles.sum(axis=1)
+    totals_all = profiles.sum(axis=1) * 0.5  # kW → kWh (×0.5 h interval)
     print(
         f"{'All':<8} {len(profiles):>7d} {totals_all.mean():>10.1f} "
         f"{totals_all.std():>10.1f} {np.median(totals_all):>10.1f} "
         f"{totals_all.min():>10.1f} {totals_all.max():>10.1f}"
     )
     print()
-    print(
-        f"Value range (half-hourly): [{profiles.min():.4f}, {profiles.max():.4f}] kWh"
-    )
+    print(f"Value range (half-hourly): [{profiles.min():.4f}, {profiles.max():.4f}] kW")
     print(f"Fraction of exact zeros:   {(profiles == 0).mean():.4f}")
     print("Fraction of padding zeros: see month-end padding below")
 
@@ -187,7 +190,7 @@ def fig2_mean_daily_profiles(profiles, labels):
         ax.plot(hours, mean_daily, label=MONTH_NAMES[m], color=color, alpha=0.8)
 
     ax.set_xlabel("Hour of day")
-    ax.set_ylabel("Mean consumption (kWh per half-hour)")
+    ax.set_ylabel("Mean power [kW]")
     ax.set_title("LCL: Mean Daily Profile by Month")
     ax.set_xlim(0, 24)
     ax.set_xticks(range(0, 25, 3))
@@ -209,7 +212,8 @@ def fig3_monthly_distributions(profiles, labels):
             data_per_month.append([0])
             colors.append("#999999")
             continue
-        totals = profiles[mask].sum(axis=1)
+        # kW × 0.5 h = kWh per interval; sum gives total monthly kWh
+        totals = profiles[mask].sum(axis=1) * 0.5
         data_per_month.append(totals)
         colors.append(SEASON_COLORS[MONTH_TO_SEASON[m]])
 
@@ -225,7 +229,7 @@ def fig3_monthly_distributions(profiles, labels):
         patch.set_alpha(0.7)
 
     ax.set_xlabel("Month")
-    ax.set_ylabel("Total monthly consumption (kWh)")
+    ax.set_ylabel("Total monthly consumption [kWh]")
     ax.set_title("LCL: Monthly Consumption Distribution")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
@@ -260,7 +264,7 @@ def fig4_sample_gallery(profiles, labels):
         ax.set_title(MONTH_NAMES[m], fontsize=10)
         ax.set_xlim(0, days)
         ax.set_xlabel("Day", fontsize=7)
-        ax.set_ylabel("kWh", fontsize=7)
+        ax.set_ylabel("kW", fontsize=7)
         ax.tick_params(labelsize=7)
         ax.grid(alpha=0.2)
 
