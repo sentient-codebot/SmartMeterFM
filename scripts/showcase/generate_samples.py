@@ -104,6 +104,16 @@ def generate_flow_samples(
                 # Sample from prior
                 x_0 = torch.randn(sample_shape, device=device)
 
+                # Zero out padded positions in x_0
+                valid_length = None
+                if model.create_mask and "month_length" in condition:
+                    from smartmeterfm.models.flow import FlowModelPL
+
+                    valid_length = FlowModelPL._convert_offset_month_length(
+                        condition["month_length"], 28, model.steps_per_day
+                    ).squeeze(1)
+                    x_0 = FlowModelPL._zero_padding(x_0, valid_length)
+
                 # Use the model's sample method if available
                 if hasattr(model, "sample"):
                     x_1 = model.sample(
@@ -121,6 +131,10 @@ def generate_flow_samples(
                         velocity = model.model(x_t, t, y=condition)
                         x_t = x_t + velocity * dt
                     x_1 = x_t
+
+                # Zero out padded positions in output as safeguard
+                if valid_length is not None:
+                    x_1 = FlowModelPL._zero_padding(x_1, valid_length)
 
                 all_samples.append(x_1.cpu())
 

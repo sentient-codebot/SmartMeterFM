@@ -611,6 +611,18 @@ class FlowModelPL(pl.LightningModule):
             loss_mask[i, : valid_length[i]] = 1.0
         return loss_mask
 
+    @staticmethod
+    def _zero_padding(x: Tensor, valid_length: Tensor) -> Tensor:
+        """Zero out padded positions in x beyond each sample's valid_length.
+
+        Args:
+            x: (batch, seq_len, num_ch)
+            valid_length: (batch,) number of valid sequence positions per sample
+        """
+        seq_len = x.shape[1]
+        mask = torch.arange(seq_len, device=x.device).unsqueeze(0) < valid_length.unsqueeze(1)
+        return x * mask.unsqueeze(-1)
+
     def training_step(
         self,
         batch: tuple[Tensor, dict[str, Tensor]],
@@ -620,6 +632,16 @@ class FlowModelPL(pl.LightningModule):
         profile, condition = batch
         t = torch.rand(profile.shape[0]).to(profile.device)  # t in [0, 1]
         x_0 = torch.randn_like(profile)
+
+        # compute valid_length early so we can zero padded positions in x_0
+        if self.create_mask:
+            valid_length = self._convert_offset_month_length(
+                condition["month_length"], 28, self.steps_per_day
+            ).squeeze(1)
+            x_0 = self._zero_padding(x_0, valid_length)
+        else:
+            valid_length = None
+
         sample = self.path.sample(x_0=x_0, t=t, x_1=profile)
         target = {
             PredictionType.VELOCITY: sample.dx_t,
@@ -636,10 +658,7 @@ class FlowModelPL(pl.LightningModule):
         else:
             start_pos = 0
         # valid length mask
-        if self.create_mask:
-            valid_length = self._convert_offset_month_length(
-                condition["month_length"], 28, self.steps_per_day
-            ).squeeze(1)
+        if valid_length is not None:
             loss_mask = self._create_loss_mask(
                 valid_length=valid_length,
                 full_length=profile.shape[1] * profile.shape[2],
@@ -687,6 +706,16 @@ class FlowModelPL(pl.LightningModule):
         # val loss
         t = torch.rand(profile.shape[0]).to(profile.device)  # t in [0, 1]
         x_0 = torch.randn_like(profile)
+
+        # compute valid_length early so we can zero padded positions in x_0
+        if self.create_mask:
+            valid_length = self._convert_offset_month_length(
+                condition["month_length"], 28, self.steps_per_day
+            ).squeeze(1)
+            x_0 = self._zero_padding(x_0, valid_length)
+        else:
+            valid_length = None
+
         sample = self.path.sample(x_0=x_0, t=t, x_1=profile)
         target = {
             PredictionType.VELOCITY: sample.dx_t,
@@ -701,10 +730,7 @@ class FlowModelPL(pl.LightningModule):
             )
         else:
             start_pos = 0
-        if self.create_mask:
-            valid_length = self._convert_offset_month_length(
-                condition["month_length"], 28, self.steps_per_day
-            ).squeeze(1)
+        if valid_length is not None:
             loss_mask = self._create_loss_mask(
                 valid_length=valid_length,
                 full_length=profile.shape[1] * profile.shape[2],
