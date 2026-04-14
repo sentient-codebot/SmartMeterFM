@@ -16,7 +16,7 @@ cd ~/projects/SmartMeterFM
 source .venv/bin/activate
 uv sync
 
-CKPT="checkpoints/LCL-0414/last-v2.ckpt"
+CKPT="checkpoints/LCL-0414/last-v3.ckpt"
 
 python scripts/showcase/generate_samples.py \
     --model_type flow \

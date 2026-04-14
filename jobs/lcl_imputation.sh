@@ -16,7 +16,7 @@ cd ~/projects/SmartMeterFM
 source .venv/bin/activate
 uv sync
 
-CKPT="checkpoints/LCL-0414/last-v2.ckpt"
+CKPT="checkpoints/LCL-0414/last-v3.ckpt"
 
 # MCAR imputation (20% missing)
 python scripts/showcase/imputation_demo.py \

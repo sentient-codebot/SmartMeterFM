@@ -16,7 +16,7 @@ cd ~/projects/SmartMeterFM
 source .venv/bin/activate
 uv sync
 
-CKPT="checkpoints/LCL-0414/last-v2.ckpt"
+CKPT="checkpoints/LCL-0414/last-v3.ckpt"
 
 # 2x super-resolution (1h → 30min)
 python scripts/showcase/super_resolution_demo.py \
