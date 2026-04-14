@@ -111,7 +111,9 @@ class TimeSeriesDataCollection(DatasetCollection):
     def create_dataset(self) -> DatasetWithMetadata:
         raise NotImplementedError
 
-    def save_dataset(self, dataset: DatasetWithMetadata, processed_filename: str) -> None:
+    def save_dataset(
+        self, dataset: DatasetWithMetadata, processed_filename: str
+    ) -> None:
         os.makedirs(self.processed_dir, exist_ok=True)
         torch.save(dataset, os.path.join(self.processed_dir, processed_filename))
         print(f"Saved {processed_filename}")
@@ -316,12 +318,10 @@ class TimeSeriesDataCollection(DatasetCollection):
                     _profile = torch.from_numpy(
                         data.astype(np.float32)
                     )  # [N, timesteps_in_month]
-                    _month_label = torch.ones(
-                        _profile.shape[0], dtype=torch.long
-                    ) * (month - 1)
-                    _year_label = torch.ones(
-                        _profile.shape[0], dtype=torch.long
-                    ) * year
+                    _month_label = torch.ones(_profile.shape[0], dtype=torch.long) * (
+                        month - 1
+                    )
+                    _year_label = torch.ones(_profile.shape[0], dtype=torch.long) * year
 
                     # clean
                     _profile, indices = self.clean_dataset(_profile)

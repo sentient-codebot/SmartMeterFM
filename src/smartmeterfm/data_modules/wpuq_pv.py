@@ -357,9 +357,7 @@ class WPuQPV(WPuQ):
                     _month_label = torch.ones(_profile.shape[0], dtype=torch.long) * (
                         month - 1
                     )
-                    _year_label = torch.ones(
-                        _profile.shape[0], dtype=torch.long
-                    ) * year
+                    _year_label = torch.ones(_profile.shape[0], dtype=torch.long) * year
 
                     # clean
                     _profile, indices = self.clean_dataset(_profile)

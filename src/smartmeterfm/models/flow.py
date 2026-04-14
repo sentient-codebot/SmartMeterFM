@@ -716,17 +716,20 @@ class FlowModelPL(pl.LightningModule):
                 sequence=profile.shape[1],
             )
             model_out = self.model(
-                x=sample.x_t, t=t, start_pos=start_pos,
-                c=condition, valid_length=valid_length,
+                x=sample.x_t,
+                t=t,
+                start_pos=start_pos,
+                c=condition,
+                valid_length=valid_length,
             )
             cm_loss = (
                 torch.pow((model_out - target) * loss_mask, 2).sum() / loss_mask.sum()
             )  # CM loss
         else:
             cm_loss = torch.pow(
-                self.model(
-                    x=sample.x_t, t=t, start_pos=start_pos, c=condition
-                ) - target, 2
+                self.model(x=sample.x_t, t=t, start_pos=start_pos, c=condition)
+                - target,
+                2,
             ).mean()  # CM loss
         self.log(
             "Validation/loss",

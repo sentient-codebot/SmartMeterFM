@@ -100,7 +100,9 @@ class BaselineDataLoader:
                 sample_labels = {key: labels[key][i] for key in labels.keys()}
 
                 # Get valid length
-                valid_steps = int(sample_labels["month_length"].item() + 28) * self.steps_per_day
+                valid_steps = (
+                    int(sample_labels["month_length"].item() + 28) * self.steps_per_day
+                )
 
                 # Flatten but keep full length
                 ts_flat = profile.flatten()
