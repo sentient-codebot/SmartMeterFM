@@ -20,7 +20,7 @@ uv sync
 for YEAR in 2018 2019 2020; do
     python -c "
 from smartmeterfm.data_modules.wpuq_household import PreWPuQHousehold
-pre = PreWPuQHousehold(root='data/wpuq/raw', year=${YEAR})
+pre = PreWPuQHousehold(root='data/wpuq_household/raw', year=${YEAR})
 pre.load_process_save()
 "
     echo "**************** Year ${YEAR} preprocessing completed. **************************"
