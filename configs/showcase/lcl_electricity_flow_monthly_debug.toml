@@ -1,13 +1,9 @@
-# SmartMeterFM Showcase Configuration
-# Flow Matching model for LCL Smart Meter Electricity data — monthly segments
-#
-# Dataset: Low Carbon London (Zenodo CC-BY 4.0)
-# ~5,500 households at 30-min resolution, 2012–2013
-# Monthly segments padded to 31 days: 31 × 48 = 1488 timesteps
-# After patchify(16): seq_length = 93, num_in_channel = 16
+# SmartMeterFM Showcase Configuration — DEBUG
+# Reduced training steps for quick sanity check
+# Based on lcl_electricity_flow_monthly.toml
 
-exp_id = "showcase_lcl_electricity_flow_monthly"
-log_wandb = true
+exp_id = "showcase_lcl_electricity_flow_monthly_debug"
+log_wandb = false
 log_mlflow = false
 
 [data]
@@ -17,7 +13,7 @@ load = true
 normalize = true
 normalize_method = "meanstd"
 pit = false
-resolution = "30min"  # LCL native resolution (no upsampling supported)
+resolution = "30min"
 segment_type = "monthly"
 shuffle = true
 vectorize = true
@@ -41,8 +37,8 @@ dim_feedforward = 256
 num_encoder_layer = 0
 num_decoder_layer = 6
 learn_variance = false
-num_in_channel = 16   # = vectorize_window_size (patch_size)
-seq_length = 93       # 1488 / 16 (31 days × 48 steps/day at 30min, patchified)
+num_in_channel = 16
+seq_length = 93
 freeze_layers = false
 resume = false
 
@@ -54,7 +50,7 @@ method = "euler"
 cfg_scale = 1.0
 
 [train]
-batch_size = 32       # larger batch OK — LCL has ~100k samples
+batch_size = 32
 lr = 0.0001
 adam_betas = [0.9, 0.999]
 gradient_accumulate_every = 1
@@ -63,9 +59,9 @@ ema_decay = 0.9999
 amp = true
 mixed_precision_type = "bf16"
 split_batches = true
-num_train_step = 50000
-save_and_sample_every = 10000
-val_every = 1000
+num_train_step = 200
+save_and_sample_every = 100
+val_every = 50
 val_batch_size = 64
 
 [train.val_sample_config]
