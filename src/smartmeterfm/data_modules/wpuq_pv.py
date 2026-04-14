@@ -11,14 +11,10 @@ import torch
 from dateutil.relativedelta import relativedelta
 from einops import rearrange
 
-from .heat_pump import WPuQ, shuffle_array
-from .utils import (
-    NAME_SEASONS,
-    DatasetWithMetadata,
-    StaticLabelContainer,
-    WPuQPVReader,
-    months_of_season,
-)
+from .containers import DatasetWithMetadata
+from .heat_pump import WPuQ
+from .preprocessing import NAME_SEASONS, months_of_season, shuffle_array
+from .readers import WPuQPVReader
 
 
 PREPROCESS_RES = "1min"
@@ -310,31 +306,6 @@ class WPuQPV(WPuQ):
             return "wpuq_pv_monthly"
         return self.common_prefix
 
-    def _get_pool_kernel_size(self) -> int | None:
-        resolution = self.process_option["resolution"]
-        if resolution == "10s":
-            return None
-        elif resolution == "1min":
-            return 60 // self.base_res_second
-        elif resolution == "15min":
-            return 15 * 60 // self.base_res_second
-        elif resolution == "30min":
-            return 30 * 60 // self.base_res_second
-        elif resolution == "1h":
-            return 60 * 60 // self.base_res_second
-        else:
-            raise NotImplementedError(f"Unsupported resolution: {resolution}")
-
-    def _max_monthly_timesteps(self) -> int:
-        """Max monthly timesteps after resolution adjustment."""
-        pool_k = self._get_pool_kernel_size()
-        base_timesteps = (
-            31 * 24 * 60 * 60 // self.base_res_second
-        )  # 31 days at base res
-        if pool_k is None:
-            return base_timesteps
-        return base_timesteps // pool_k
-
     def create_dataset(self) -> DatasetWithMetadata:
         segment_type = self.process_option.get("segment_type", "daily")
         if segment_type == "monthly":
@@ -427,51 +398,10 @@ class WPuQPV(WPuQ):
             "dir": all_label_dir,
         }
 
-        # normalize
-        scaling_factor = None
-        if self.process_option["normalize"]:
-            all_profile, scaling_factor = self.normalize_fn(all_profile)
-
-        # pit
-        pit = None
-        assert not self.process_option["pit_transform"], (
-            "Not implemented. Deprecated.\
-                Advised to use PIT in the PL model or PL data module."
-        )
-
-        # vectorize
-        if self.process_option["vectorize"]:
-            all_profile = self.vectorize_fn(
-                all_profile,
-                style=self.process_option["style_vectorize"],
-                window_size=self.process_option["vectorize_window_size"],
-            )
-
-        # split
-        task_chunk = list(all_profile.split(num_sample_task, dim=0))
-        label_chunk = {}
-        for _label_name, _label in all_label.items():
-            label_chunk[_label_name] = list(_label.split(num_sample_task, dim=0))
-        profile_task_chunk = {}
-        label_task_chunk = {}
-        for task in self.record_tasks:
-            profile_task_chunk[task] = rearrange(task_chunk.pop(0), "n c l -> n l c")
-            label_task_chunk[task] = StaticLabelContainer({})
-            for _label_name, _label_list in label_chunk.items():
-                label_task_chunk[task] += StaticLabelContainer(
-                    {_label_name: _label_list.pop(0)}
-                )
-
-        dataset = DatasetWithMetadata(
-            profile=profile_task_chunk,
-            label=label_task_chunk,
-            pit=pit,
-            scaling_factor=scaling_factor,
-        )
-        return dataset
+        # shared pipeline: normalize, vectorize, split, wrap
+        return self._finalize_dataset(all_profile, all_label, num_sample_task)
 
     def _create_dataset_daily(self) -> DatasetWithMetadata:
-        # B: if processed not exists or load is False: load, clean, shuffle, vectorize, save
         raw_array = {}
         for task in self.record_tasks:
             raw_array[task] = []
@@ -506,28 +436,27 @@ class WPuQPV(WPuQ):
         for task in self.record_tasks:
             _len = 0
             for season in NAME_SEASONS:
+                season_months = months_of_season(season)
+                profiles_per_month = [
+                    raw_array_collected[task][str(m)]["P_TOT"] for m in season_months
+                ]
+                dirs_per_month = [
+                    raw_array_collected[task][str(m)]["DIRECTION"]
+                    for m in season_months
+                ]
                 _profile_to_append = torch.from_numpy(
-                    np.concatenate(
-                        [
-                            raw_array_collected[task][str(month)]["P_TOT"]
-                            for month in months_of_season(season)
-                        ],
-                        axis=0,
-                    ).astype(np.float32)
+                    np.concatenate(profiles_per_month, axis=0).astype(np.float32)
                 )
-                # make labels
                 _dir_to_append = torch.from_numpy(
-                    np.concatenate(
-                        [
-                            raw_array_collected[task][str(month)]["DIRECTION"]
-                            for month in months_of_season(season)
-                        ],
-                        axis=0,
-                    ).astype(np.float32)
+                    np.concatenate(dirs_per_month, axis=0).astype(np.float32)
                 )
-                _month_to_append = torch.ones(
-                    _profile_to_append.shape[0], dtype=torch.long
-                ) * (month - 1)  # shape: [num_sample,]
+                # Build per-sample month labels matching each month's sample count
+                _month_to_append = torch.cat(
+                    [
+                        torch.full((p.shape[0],), m - 1, dtype=torch.long)
+                        for m, p in zip(season_months, profiles_per_month, strict=True)
+                    ]
+                )
                 # clean profile
                 _profile_to_append, indices = self.clean_dataset(_profile_to_append)
                 # clean - filter labels
@@ -557,73 +486,7 @@ class WPuQPV(WPuQ):
         }  # for all labels, have batch x feature_dim shape
 
         # resolution adjustment
-        resolution = self.process_option["resolution"]
-        if resolution == "10s":
-            pass
-        else:
-            if resolution == "1min":
-                _pool_kernel_size = 60 // self.base_res_second
-            elif resolution == "15min":
-                _pool_kernel_size = 15 * 60 // self.base_res_second
-            elif resolution == "30min":
-                _pool_kernel_size = 30 * 60 // self.base_res_second
-            elif resolution == "1h":
-                _pool_kernel_size = 60 * 60 // self.base_res_second
-            else:
-                raise NotImplementedError
-            all_profile = torch.nn.functional.avg_pool1d(
-                all_profile, kernel_size=_pool_kernel_size, stride=_pool_kernel_size
-            )
+        all_profile = self._apply_resolution_adjustment(all_profile)
 
-        # normalize
-        scaling_factor = None
-        if self.process_option["normalize"]:
-            all_profile, scaling_factor = self.normalize_fn(all_profile)
-
-        # pit
-        pit = None
-        assert not self.process_option["pit_transform"], (
-            "Not implemented. Deprecated.\
-                Advised to use PIT in the PL model or PL data module."
-        )
-
-        # shuffle
-        pass  # already shuffled in pre-processing
-
-        # vectorize
-        if self.process_option["vectorize"]:
-            all_profile = self.vectorize_fn(
-                all_profile,
-                style=self.process_option["style_vectorize"],
-                window_size=self.process_option["vectorize_window_size"],
-            )
-
-        # split
-        task_chunk = list(
-            all_profile.split(num_sample_task, dim=0)
-        )  # shape: [num_sample, 1, seq_length]
-        label_chunk = {}  # lable_chunk["label_name"]
-        # = [_label_task0, _label_task1, ...]
-        for _label_name, _label in all_label.items():
-            label_chunk[_label_name] = list(
-                _label.split(num_sample_task, dim=0)
-            )  # shape: [num_sample, *]
-        profile_task_chunk = {}
-        label_task_chunk = {}
-        for task in self.record_tasks:
-            profile_task_chunk[task] = rearrange(task_chunk.pop(0), "n c l -> n l c")
-            label_task_chunk[task] = StaticLabelContainer({})
-            for _label_name, _label_list in label_chunk.items():
-                # label_task_chunk[task][_label_name] = _label_list.pop(0)
-                label_task_chunk[task] += StaticLabelContainer(
-                    {_label_name: _label_list.pop(0)}
-                )
-            # data type will be processed later when used.
-
-        dataset = DatasetWithMetadata(
-            profile=profile_task_chunk,
-            label=label_task_chunk,
-            pit=pit,
-            scaling_factor=scaling_factor,
-        )
-        return dataset
+        # shared pipeline: normalize, vectorize, split, wrap
+        return self._finalize_dataset(all_profile, all_label, num_sample_task)
