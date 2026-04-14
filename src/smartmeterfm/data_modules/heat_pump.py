@@ -9,7 +9,6 @@ import torch
 from einops import rearrange
 from tqdm import tqdm
 
-from ..utils.configuration import DataConfig
 from .base import TimeSeriesDataCollection
 from .containers import DatasetWithMetadata
 from .preprocessing import shuffle_array
@@ -271,54 +270,12 @@ class WPuQ(TimeSeriesDataCollection):
 
     common_prefix = "wpuq"
     record_years = [2018, 2019, 2020]
-    record_tasks = ["train", "val", "test"]
     base_res_second = 10  # base = 10s resolution
-    dict_cond_dim = {
-        "season": 1,
-    }
+    original_dict_cond_dim = {"month": 1}
 
-    def __init__(
-        self,
-        data_config: DataConfig,
-    ):
-        super().__init__()
-        self.root = data_config.root
-        assert data_config.resolution in [
-            "10s",
-            "1min",
-            "15min",
-            "30min",
-            "1h",
-        ], "Invalid resolution"
-        self.process_option = {
-            "resolution": data_config.resolution,
-            "normalize": data_config.normalize,
-            "normalize_method": data_config.normalize_method,
-            "pit_transform": data_config.pit,
-            "shuffle": data_config.shuffle,
-            "vectorize": data_config.vectorize,
-            "style_vectorize": data_config.style_vectorize,
-            "vectorize_window_size": data_config.vectorize_window_size,
-            "segment_type": data_config.segment_type,
-        }
-        hashed_option = self.hash_option(self.process_option)
-        processed_filename = (
-            self.common_prefix + f"_{hashed_option}.pt"
-        )  # we saved all processed tasks in one file
-
-        # A: if processed exists and load is True: load
-        self.dataset = None
-        if data_config.load:
-            self.dataset = self.load_dataset(processed_filename)
-
-        if self.dataset is not None:
-            print("All processed data loaded.")
-        else:
-            print("Process and save data.")
-            self.dataset = self.create_dataset()
-            self.save_dataset(self.dataset, processed_filename)
-
-        print("Dataset ready.")
+    def _validate_resolution(self, resolution: str):
+        if resolution not in ["10s", "1min", "15min", "30min", "1h"]:
+            raise ValueError(f"Invalid resolution for WPuQ: {resolution!r}")
 
     def create_dataset(self) -> DatasetWithMetadata:
         # B: if processed not exists or load is False: load, clean,
@@ -383,25 +340,6 @@ class WPuQ(TimeSeriesDataCollection):
 
         # shared pipeline: normalize, vectorize, split, wrap
         return self._finalize_dataset(all_tensor, all_label, num_sample_task)
-
-    def save_dataset(self, dataset: DatasetWithMetadata, processed_filename) -> None:
-        os.makedirs(os.path.join(self.processed_dir), exist_ok=True)
-        torch.save(dataset, os.path.join(self.processed_dir, processed_filename))
-        print(f"Saved {processed_filename}")
-
-    def load_dataset(self, processed_filename) -> DatasetWithMetadata:
-        if os.path.exists(os.path.join(self.processed_dir, processed_filename)):
-            try:
-                loaded: DatasetWithMetadata = torch.load(
-                    os.path.join(self.processed_dir, processed_filename),
-                    map_location="cpu",
-                    weights_only=False,
-                )
-                print("Processed data loaded.")
-                return loaded
-            except Exception as e:
-                print(f"Error loading processed data. {e} Recreating...")
-        return None
 
 
 def main(): ...

@@ -78,8 +78,9 @@ from datetime import datetime, timedelta
 import numpy as np
 from tqdm import tqdm
 
+from .base import TimeSeriesDataCollection
+from .containers import DatasetWithMetadata
 from .preprocessing import split_and_save_npz
-from .wpuq_household import WPuQHousehold
 
 
 RES_SECOND = 1800  # 30-minute resolution
@@ -217,11 +218,8 @@ class PreLCLElectricity:
             out[str(month)].append(segment.reshape(1, -1))
 
 
-class LCLElectricity(WPuQHousehold):
+class LCLElectricity(TimeSeriesDataCollection):
     """Monthly LCL smart meter dataset with optional resolution downsampling.
-
-    Inherits the monthly-segment loading pattern from WPuQHousehold.
-    Only the class attributes differ (prefix, base resolution, years).
 
     Values are average power in **kW** (converted from kWh/half-hour during
     preprocessing).  Supported resolutions: "30min" (native), "1h".
@@ -230,14 +228,17 @@ class LCLElectricity(WPuQHousehold):
     common_prefix = "lcl_electricity"
     base_res_second = 1800  # 30-minute native resolution
     record_years = [2012, 2013]
+    original_dict_cond_dim = {"month": 1}
 
     VALID_RESOLUTIONS = ("30min", "1h")
 
-    def __init__(self, data_config):
-        if data_config.resolution not in self.VALID_RESOLUTIONS:
+    def _validate_resolution(self, resolution: str):
+        if resolution not in self.VALID_RESOLUTIONS:
             raise ValueError(
                 f"LCL dataset only supports resolutions {self.VALID_RESOLUTIONS} "
                 f"(native is 30min, upsampling not supported). "
-                f"Got: {data_config.resolution!r}"
+                f"Got: {resolution!r}"
             )
-        super().__init__(data_config)
+
+    def create_dataset(self) -> DatasetWithMetadata:
+        return self._create_dataset_monthly()

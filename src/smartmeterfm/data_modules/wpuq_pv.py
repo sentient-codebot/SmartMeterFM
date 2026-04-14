@@ -297,6 +297,7 @@ class PreWPuQPV:
 class WPuQPV(WPuQ):
     common_prefix = "wpuq_pv"
     base_res_second = 60  # base resolution = 60s
+    original_dict_cond_dim = {"month": 1, "dir": 1}
 
     # Max monthly timesteps at 15min resolution: 31 days * 96 steps/day
     MAX_MONTHLY_TIMESTEPS_15MIN = 31 * (24 * 60 // 15)  # 2976
@@ -336,10 +337,11 @@ class WPuQPV(WPuQ):
         all_profile = []
         all_label_dir = []
         all_label_month = []
+        all_label_year = []
         for task in self.record_tasks:
             _len = 0
             for month in range(1, 13):
-                for npz in raw_array[task]:
+                for year, npz in zip(self.record_years, raw_array[task]):
                     if str(month) not in npz:
                         continue
                     data = npz[str(month)]
@@ -355,11 +357,15 @@ class WPuQPV(WPuQ):
                     _month_label = torch.ones(_profile.shape[0], dtype=torch.long) * (
                         month - 1
                     )
+                    _year_label = torch.ones(
+                        _profile.shape[0], dtype=torch.long
+                    ) * year
 
                     # clean
                     _profile, indices = self.clean_dataset(_profile)
                     _dir = _dir[indices]
                     _month_label = _month_label[indices]
+                    _year_label = _year_label[indices]
 
                     # resolution adjustment per-month (before concatenation,
                     # since different months have different lengths)
@@ -384,6 +390,7 @@ class WPuQPV(WPuQ):
                     all_profile.append(_profile)
                     all_label_dir.append(_dir)
                     all_label_month.append(_month_label)
+                    all_label_year.append(_year_label)
                     _len += len(_profile)
 
             num_sample_task.append(_len)
@@ -392,9 +399,12 @@ class WPuQPV(WPuQ):
         all_profile = rearrange(all_profile, "n l -> n () l")  # [N, 1, seq_length]
         all_label_month = torch.cat(all_label_month, dim=0)
         all_label_month = rearrange(all_label_month, "n -> n ()")
+        all_label_year = torch.cat(all_label_year, dim=0)
+        all_label_year = rearrange(all_label_year, "n -> n ()")
         all_label_dir = torch.cat(all_label_dir, dim=0)
         all_label = {
             "month": all_label_month,
+            "year": all_label_year,
             "dir": all_label_dir,
         }
 

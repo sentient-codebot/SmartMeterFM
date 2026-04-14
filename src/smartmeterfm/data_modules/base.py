@@ -5,10 +5,12 @@ import os
 from abc import ABC, abstractmethod
 from typing import Annotated
 
+import numpy as np
 import torch
 from einops import rearrange
 from torch import Tensor
 
+from ..utils.configuration import DataConfig
 from .containers import DatasetWithMetadata, StaticLabelContainer
 from .transforms import ChronoVectorize, Compose, MeanStdScaler, MinMaxScaler, Patchify
 
@@ -33,15 +35,52 @@ class DatasetCollection(ABC):
 class TimeSeriesDataCollection(DatasetCollection):
     """Base class for time series dataset collections.
 
-    Subclasses must set `base_res_second`, `record_tasks`, `common_prefix`,
-    and implement `load_dataset`, `create_dataset`, `save_dataset`.
+    Subclasses must set `base_res_second`, `common_prefix`,
+    and implement `create_dataset`.
     """
 
     original_dict_cond_dim = {}  # to be overwritten by child class
+    record_tasks = ["train", "val", "test"]
 
-    def __init__(self):
+    def __init__(self, data_config: DataConfig):
         self.all_dict_cond_dim = self.original_dict_cond_dim.copy()
         self.profile_transform: Compose | None = None
+        self.root = data_config.root
+
+        self._validate_resolution(data_config.resolution)
+
+        self.process_option = {
+            "resolution": data_config.resolution,
+            "normalize": data_config.normalize,
+            "normalize_method": data_config.normalize_method,
+            "pit_transform": data_config.pit,
+            "shuffle": data_config.shuffle,
+            "vectorize": data_config.vectorize,
+            "style_vectorize": data_config.style_vectorize,
+            "vectorize_window_size": data_config.vectorize_window_size,
+            "segment_type": data_config.segment_type,
+            "target_labels": data_config.target_labels,
+        }
+        hashed_option = self.hash_option(self.process_option)
+        processed_filename = self.common_prefix + f"_{hashed_option}.pt"
+
+        self.dataset = None
+        if data_config.load:
+            self.dataset = self.load_dataset(processed_filename)
+
+        if self.dataset is not None:
+            print("All processed data loaded.")
+        else:
+            print("Process and save data.")
+            self.dataset = self.create_dataset()
+            self.save_dataset(self.dataset, processed_filename)
+
+        print("Dataset ready.")
+
+    def _validate_resolution(self, resolution: str):
+        """Override in subclasses to restrict valid resolutions."""
+        if resolution not in RESOLUTION_SECONDS:
+            raise ValueError(f"Unknown resolution: {resolution!r}")
 
     @property
     def dict_cond_dim(self):
@@ -55,17 +94,27 @@ class TimeSeriesDataCollection(DatasetCollection):
                 }
         return self.original_dict_cond_dim
 
-    @abstractmethod
-    def load_dataset(self) -> DatasetWithMetadata:
-        raise NotImplementedError
+    def load_dataset(self, processed_filename: str) -> DatasetWithMetadata | None:
+        path = os.path.join(self.processed_dir, processed_filename)
+        if os.path.exists(path):
+            try:
+                loaded: DatasetWithMetadata = torch.load(
+                    path, map_location="cpu", weights_only=False
+                )
+                print("Processed data loaded.")
+                return loaded
+            except Exception as e:
+                print(f"Error loading processed data. {e} Recreating...")
+        return None
 
     @abstractmethod
     def create_dataset(self) -> DatasetWithMetadata:
         raise NotImplementedError
 
-    @abstractmethod
-    def save_dataset(self, dataset: DatasetWithMetadata) -> None:
-        raise NotImplementedError
+    def save_dataset(self, dataset: DatasetWithMetadata, processed_filename: str) -> None:
+        os.makedirs(self.processed_dir, exist_ok=True)
+        torch.save(dataset, os.path.join(self.processed_dir, processed_filename))
+        print(f"Saved {processed_filename}")
 
     # --- Hashing ---
 
@@ -227,6 +276,95 @@ class TimeSeriesDataCollection(DatasetCollection):
             pit=None,
             scaling_factor=scaling_factor,
         )
+
+    # --- Monthly loading helper ---
+
+    def _create_dataset_monthly(self) -> DatasetWithMetadata:
+        """Shared monthly loading: load NPZs, loop task/month/npz, clean,
+        resolution-adjust per-month, pad to 31 days, build month labels."""
+        _pool_kernel_size = self._get_pool_kernel_size()
+        _max_timesteps = self._max_monthly_timesteps()
+
+        # Load raw NPZ files
+        raw_array: dict[str, list] = {}
+        for task in self.record_tasks:
+            raw_array[task] = []
+            for year in self.record_years:
+                raw_array[task].append(
+                    np.load(
+                        os.path.join(
+                            self.raw_dir,
+                            f"{self.common_prefix}_{year}_{task}.npz",
+                        )
+                    )
+                )
+
+        num_sample_task = []
+        all_profile = []
+        all_label_month = []
+        all_label_year = []
+        for task in self.record_tasks:
+            _len = 0
+            for month in range(1, 13):
+                for year, npz in zip(self.record_years, raw_array[task]):
+                    if str(month) not in npz:
+                        continue
+                    data = npz[str(month)]
+                    if data.shape[0] == 0:
+                        continue
+
+                    _profile = torch.from_numpy(
+                        data.astype(np.float32)
+                    )  # [N, timesteps_in_month]
+                    _month_label = torch.ones(
+                        _profile.shape[0], dtype=torch.long
+                    ) * (month - 1)
+                    _year_label = torch.ones(
+                        _profile.shape[0], dtype=torch.long
+                    ) * year
+
+                    # clean
+                    _profile, indices = self.clean_dataset(_profile)
+                    _month_label = _month_label[indices]
+                    _year_label = _year_label[indices]
+
+                    # resolution adjustment per-month (before concat,
+                    # since different months have different lengths)
+                    _profile = rearrange(_profile, "n l -> n () l")
+                    if _pool_kernel_size is not None:
+                        _profile = torch.nn.functional.avg_pool1d(
+                            _profile,
+                            kernel_size=_pool_kernel_size,
+                            stride=_pool_kernel_size,
+                        )
+
+                    # pad to max monthly length (31 days)
+                    current_length = _profile.shape[-1]
+                    if current_length < _max_timesteps:
+                        pad_size = _max_timesteps - current_length
+                        _profile = torch.nn.functional.pad(
+                            _profile, (0, pad_size), mode="constant", value=0.0
+                        )
+
+                    _profile = rearrange(_profile, "n () l -> n l")
+
+                    all_profile.append(_profile)
+                    all_label_month.append(_month_label)
+                    all_label_year.append(_year_label)
+                    _len += len(_profile)
+
+            num_sample_task.append(_len)
+
+        all_profile = torch.cat(all_profile, dim=0)  # [N, seq_length]
+        all_profile = rearrange(all_profile, "n l -> n () l")  # [N, 1, seq_length]
+        all_label_month = torch.cat(all_label_month, dim=0)
+        all_label_month = rearrange(all_label_month, "n -> n ()")
+        all_label_year = torch.cat(all_label_year, dim=0)
+        all_label_year = rearrange(all_label_year, "n -> n ()")
+        all_label = {"month": all_label_month, "year": all_label_year}
+
+        # shared pipeline: normalize, vectorize, split, wrap
+        return self._finalize_dataset(all_profile, all_label, num_sample_task)
 
     # --- Properties ---
 

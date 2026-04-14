@@ -57,8 +57,6 @@ import os
 from datetime import datetime
 
 import numpy as np
-import torch
-from einops import rearrange
 from tqdm import tqdm
 
 from .containers import DatasetWithMetadata
@@ -197,80 +195,11 @@ class WPuQHousehold(WPuQ):
 
     common_prefix = "wpuq_household"
     base_res_second = 60  # preprocessed at 1-minute resolution
+    original_dict_cond_dim = {"month": 1}
+
+    def _validate_resolution(self, resolution: str):
+        if resolution not in ["1min", "15min", "30min", "1h"]:
+            raise ValueError(f"Invalid resolution for WPuQHousehold: {resolution!r}")
 
     def create_dataset(self) -> DatasetWithMetadata:
-        _pool_kernel_size = self._get_pool_kernel_size()
-        _max_timesteps = self._max_monthly_timesteps()
-
-        # Load raw NPZ files
-        raw_array = {}
-        for task in self.record_tasks:
-            raw_array[task] = []
-            for year in self.record_years:
-                raw_array[task].append(
-                    np.load(
-                        os.path.join(
-                            self.raw_dir,
-                            f"{self.common_prefix}_{year}_{task}.npz",
-                        )
-                    )
-                )
-
-        num_sample_task = []
-        all_profile = []
-        all_label_month = []
-        for task in self.record_tasks:
-            _len = 0
-            for month in range(1, 13):
-                for npz in raw_array[task]:
-                    if str(month) not in npz:
-                        continue
-                    data = npz[str(month)]
-                    if data.shape[0] == 0:
-                        continue
-
-                    _profile = torch.from_numpy(
-                        data.astype(np.float32)
-                    )  # [N, timesteps_in_month]
-                    _month_label = torch.ones(_profile.shape[0], dtype=torch.long) * (
-                        month - 1
-                    )
-
-                    # clean
-                    _profile, indices = self.clean_dataset(_profile)
-                    _month_label = _month_label[indices]
-
-                    # resolution adjustment per-month (before concat,
-                    # since different months have different lengths)
-                    _profile = rearrange(_profile, "n l -> n () l")
-                    if _pool_kernel_size is not None:
-                        _profile = torch.nn.functional.avg_pool1d(
-                            _profile,
-                            kernel_size=_pool_kernel_size,
-                            stride=_pool_kernel_size,
-                        )
-
-                    # pad to max monthly length (31 days)
-                    current_length = _profile.shape[-1]
-                    if current_length < _max_timesteps:
-                        pad_size = _max_timesteps - current_length
-                        _profile = torch.nn.functional.pad(
-                            _profile, (0, pad_size), mode="constant", value=0.0
-                        )
-
-                    _profile = rearrange(_profile, "n () l -> n l")
-
-                    all_profile.append(_profile)
-                    all_label_month.append(_month_label)
-                    _len += len(_profile)
-
-            num_sample_task.append(_len)
-
-        all_profile = torch.cat(all_profile, dim=0)  # [N, seq_length]
-        all_profile = rearrange(all_profile, "n l -> n () l")  # [N, 1, seq_length]
-        all_label_month = torch.cat(all_label_month, dim=0)
-        all_label_month = rearrange(all_label_month, "n -> n ()")
-        all_label = {"month": all_label_month}
-
-        # shared pipeline: normalize, vectorize, split, wrap
-        return self._finalize_dataset(all_profile, all_label, num_sample_task)
+        return self._create_dataset_monthly()
