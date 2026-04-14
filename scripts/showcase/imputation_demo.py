@@ -26,6 +26,8 @@ import torch
 from tqdm import tqdm
 
 from smartmeterfm.data_modules.heat_pump import WPuQ
+from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
+from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.utils.configuration import DataConfig
 
 
@@ -213,10 +215,17 @@ def main():
         help="Path to trained Flow model checkpoint",
     )
     parser.add_argument(
+        "--dataset",
+        type=str,
+        choices=["wpuq", "wpuq_household", "lcl_electricity"],
+        default="wpuq",
+        help="Dataset to use",
+    )
+    parser.add_argument(
         "--data_root",
         type=str,
         default="data/wpuq/",
-        help="Root directory for WPuQ data",
+        help="Root directory for data",
     )
     parser.add_argument(
         "--imputation_type",
@@ -290,15 +299,21 @@ def main():
     )
 
     # Load test data
-    print("\nLoading WPuQ test data...")
+    dataset_name = args.dataset
+    resolution_map = {
+        "wpuq": "15min",
+        "wpuq_household": "15min",
+        "lcl_electricity": "30min",
+    }
+    print(f"\nLoading {dataset_name} test data...")
     data_config = DataConfig(
-        dataset="wpuq",
+        dataset=dataset_name,
         root=args.data_root,
         load=True,
         normalize=True,
         normalize_method="meanstd",
         pit=False,
-        resolution="15min",
+        resolution=resolution_map[dataset_name],
         shuffle=False,
         vectorize=True,
         style_vectorize="patchify",
@@ -306,8 +321,14 @@ def main():
         target_labels=["month"],
         train_season="whole_year",
         val_season="whole_year",
+        segment_type="monthly",
     )
-    data_collection = WPuQ(data_config)
+    if dataset_name == "lcl_electricity":
+        data_collection = LCLElectricity(data_config)
+    elif dataset_name == "wpuq_household":
+        data_collection = WPuQHousehold(data_config)
+    else:
+        data_collection = WPuQ(data_config)
 
     test_profiles = data_collection.dataset.profile["test"][: args.num_test_series]
     test_labels = data_collection.dataset.label["test"]
