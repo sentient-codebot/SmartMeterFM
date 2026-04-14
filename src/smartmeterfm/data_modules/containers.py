@@ -62,6 +62,9 @@ class StaticLabelContainer:
         )
         return StaticLabelContainer({**self.dict_labels, **other.dict_labels})
 
+    def __contains__(self, key: str) -> bool:
+        return key in self.dict_labels
+
     def __getitem__(self, key: str | Sequence[str]) -> Tensor | dict[str, Tensor]:
         if self.output_type == "tensor":
             if isinstance(key, str):

@@ -191,7 +191,9 @@ class WPuQCondition(SampleCondition):
             raise ValueError(f"season must be 0-3, got {self.season}")
         if self.day_type is not None and not (0 <= self.day_type <= 1):
             raise ValueError(f"day_type must be 0 or 1, got {self.day_type}")
-        if self.first_day_of_week is not None and not (0 <= self.first_day_of_week <= 6):
+        if self.first_day_of_week is not None and not (
+            0 <= self.first_day_of_week <= 6
+        ):
             raise ValueError(
                 f"first_day_of_week must be 0-6, got {self.first_day_of_week}"
             )
@@ -220,7 +222,9 @@ class LCLCondition(SampleCondition):
     def _validate_ranges(self) -> LCLCondition:
         if self.month is not None and not (0 <= self.month <= 11):
             raise ValueError(f"month must be 0-11, got {self.month}")
-        if self.first_day_of_week is not None and not (0 <= self.first_day_of_week <= 6):
+        if self.first_day_of_week is not None and not (
+            0 <= self.first_day_of_week <= 6
+        ):
             raise ValueError(
                 f"first_day_of_week must be 0-6, got {self.first_day_of_week}"
             )

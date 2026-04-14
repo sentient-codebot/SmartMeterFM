@@ -193,15 +193,13 @@ def setup_data_module(config: ExperimentConfig):
     val_labels = data_collection.dataset.label["val"]
 
     # Extract all available label keys (preserving order)
-    label_keys = list(train_labels.keys())
+    label_keys = train_labels.label_names
 
     # Create PyTorch datasets with all labels
     train_dataset = TensorDataset(
         train_profiles, *[train_labels[k] for k in label_keys]
     )
-    val_dataset = TensorDataset(
-        val_profiles, *[val_labels[k] for k in label_keys]
-    )
+    val_dataset = TensorDataset(val_profiles, *[val_labels[k] for k in label_keys])
 
     collate_fn = make_collate_fn(label_keys)
 

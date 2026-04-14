@@ -95,6 +95,17 @@ class PeriodicSamplingCallback(pl.Callback):
                 cfg_scale=cfg_scale,
             )
 
+        # Capture wandb run in main thread — it may not be visible from the
+        # background thread via the wandb.run global.
+        wandb_run = None
+        if self.log_wandb:
+            try:
+                import wandb
+
+                wandb_run = wandb.run
+            except Exception:
+                pass
+
         self._pending = self._executor.submit(
             self._generate_and_log,
             velocity_model,
@@ -104,10 +115,19 @@ class PeriodicSamplingCallback(pl.Callback):
             step,
             trainer,
             cfg_scale,
+            wandb_run,
         )
 
     def _generate_and_log(
-        self, velocity_model, seq_len, num_ch, device, step, trainer, cfg_scale
+        self,
+        velocity_model,
+        seq_len,
+        num_ch,
+        device,
+        step,
+        trainer,
+        cfg_scale,
+        wandb_run=None,
     ):
         """Run ODE integration, save samples, plot, and log. Runs in background thread."""
         num_sample = self.sample_config.num_sample
@@ -187,13 +207,13 @@ class PeriodicSamplingCallback(pl.Callback):
         fig_path = os.path.join(step_dir, "samples_overview.png")
         fig = plot_sampled_data_v2(flat_samples, save_filepath=fig_path)
 
-        # Log to wandb
-        if self.log_wandb:
+        # Log to wandb (use run reference captured in main thread)
+        if self.log_wandb and wandb_run is not None:
             try:
                 import wandb
 
-                if wandb.run:
-                    wandb.log({"Samples/overview": wandb.Image(fig_path)}, step=step)
+                wandb_run.log({"Samples/overview": wandb.Image(fig_path)}, step=step)
+                logger.info("Logged sample figure to wandb at step %d", step)
             except Exception as e:
                 logger.warning("Failed to log samples to wandb: %s", e)
 
