@@ -39,7 +39,7 @@ dropout = 0.1
 num_attn_head = 4
 dim_feedforward = 256
 num_encoder_layer = 0
-num_decoder_layer = 6
+num_decoder_layer = 12
 learn_variance = false
 num_in_channel = 16   # = vectorize_window_size (patch_size)
 seq_length = 93       # 1488 / 16 (31 days × 48 steps/day at 30min, patchified)
