@@ -1,5 +1,6 @@
 from ..configuration import ExperimentConfig
 from ._mlflow import MLFlowModelLogger, create_mlflow_logger
+from ._sampling import PeriodicSamplingCallback
 from ._wandb import (
     WandbArtifactCleaner,
     WandbModelLogger,
@@ -11,6 +12,7 @@ from .generic import GlobalProgressBar
 __all__ = [
     "create_logger",
     "GlobalProgressBar",
+    "PeriodicSamplingCallback",
     "WandbArtifactCleaner",
     "WandbModelLogger",
     "MLFlowModelLogger",

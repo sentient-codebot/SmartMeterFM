@@ -35,6 +35,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.models.flow import FlowModelPL
+from smartmeterfm.utils.callbacks import PeriodicSamplingCallback
 from smartmeterfm.utils.configuration import (
     ExperimentConfig,
     IntegerEmbedderArgs,
@@ -283,7 +284,16 @@ def setup_trainer(args, config, num_gpus, accumulate_grad_batches, use_mps=False
 
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval="step")
 
-    callbacks = [checkpoint_callback, lr_monitor]
+    sampling_callback = PeriodicSamplingCallback(
+        sample_every=config.train.save_and_sample_every,
+        sample_config=config.train.val_sample_config,
+        months=config.train.sample_months,
+        output_dir=f"results/samples/{config.time_id}",
+        log_wandb=config.log_wandb,
+        log_mlflow=config.log_mlflow,
+    )
+
+    callbacks = [checkpoint_callback, lr_monitor, sampling_callback]
 
     # Set up loggers
     loggers = []

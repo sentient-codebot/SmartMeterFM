@@ -102,6 +102,9 @@ class TrainConfig(BaseConfig):
     save_and_sample_every: int = 50000
     val_every: int = 1250
     val_batch_size: int = 256
+    sample_months: list[int] = field(
+        default_factory=lambda: [0, 5, 11]
+    )  # Jan, Jun, Dec
 
 
 @dataclass
