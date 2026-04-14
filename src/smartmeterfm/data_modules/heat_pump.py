@@ -9,14 +9,10 @@ import torch
 from einops import rearrange
 from tqdm import tqdm
 
-from smartmeterfm.data_modules.utils import (
-    DatasetWithMetadata,
-    StaticLabelContainer,
-    TimeSeriesDataCollection,
-)
-
 from ..utils.configuration import DataConfig
-from .utils import WPuQReader
+from .base import TimeSeriesDataCollection
+from .containers import DatasetWithMetadata
+from .readers import WPuQReader
 
 
 def get_first_last_second_of_month(year: int, month: int):
@@ -388,75 +384,10 @@ class WPuQ(TimeSeriesDataCollection):
         )  # for all labels, have batch x feature_dim shape
 
         # resolution adjustment
-        resolution = self.process_option["resolution"]
-        if resolution == "10s":
-            pass
-        else:
-            if resolution == "1min":
-                _pool_kernel_size = 60 // self.base_res_second
-            elif resolution == "15min":
-                _pool_kernel_size = 15 * 60 // self.base_res_second
-            elif resolution == "30min":
-                _pool_kernel_size = 30 * 60 // self.base_res_second
-            elif resolution == "1h":
-                _pool_kernel_size = 60 * 60 // self.base_res_second
-            else:
-                raise NotImplementedError
-            all_tensor = torch.nn.functional.avg_pool1d(
-                all_tensor, kernel_size=_pool_kernel_size, stride=_pool_kernel_size
-            )
+        all_tensor = self._apply_resolution_adjustment(all_tensor)
 
-        # normalize
-        scaling_factor = None
-        if self.process_option["normalize"]:
-            all_tensor = self._normalize_fn(all_tensor)
-            scaling_factor = self.scaling_factor
-
-        # pit
-        pit = None
-        assert not self.process_option["pit_transform"], (
-            "Not implemented. Deprecated.\
-            Advised to use PIT in the PL model or PL data module."
-        )
-
-        # shuffle
-        pass  # already shuffled in pre-processing
-
-        # vectorize
-        if self.process_option["vectorize"]:
-            all_tensor = self._vectorize_fn(
-                all_tensor,
-            )
-
-        # split
-        task_chunk = list(
-            all_tensor.split(num_sample_task, dim=0)
-        )  # shape: [num_sample, 1, seq_length]
-        label_chunk = {}  # lable_chunk["label_name"]
-        # = [_label_task0, _label_task1, ...]
-        for _label_name, _label in all_label.items():
-            label_chunk[_label_name] = list(
-                _label.split(num_sample_task, dim=0)
-            )  # shape: [num_sample, *]
-        profile_task_chunk = {}
-        label_task_chunk = {}
-        for task in self.record_tasks:
-            profile_task_chunk[task] = rearrange(task_chunk.pop(0), "n c l -> n l c")
-            label_task_chunk[task] = StaticLabelContainer({})
-            for _label_name, _label_list in label_chunk.items():
-                # label_task_chunk[task][_label_name] = _label_list.pop(0)
-                label_task_chunk[task] += StaticLabelContainer(
-                    {_label_name: _label_list.pop(0)}
-                )
-            # data type will be processed later when used.
-
-        dataset = DatasetWithMetadata(
-            profile=profile_task_chunk,
-            label=label_task_chunk,
-            pit=pit,
-            scaling_factor=scaling_factor,
-        )
-        return dataset
+        # shared pipeline: normalize, vectorize, split, wrap
+        return self._finalize_dataset(all_tensor, all_label, num_sample_task)
 
     def save_dataset(self, dataset: DatasetWithMetadata, processed_filename) -> None:
         os.makedirs(os.path.join(self.processed_dir), exist_ok=True)

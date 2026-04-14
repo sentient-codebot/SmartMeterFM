@@ -56,12 +56,10 @@ import torch
 from einops import rearrange
 from tqdm import tqdm
 
-from .heat_pump import WPuQ, shuffle_array
-from .utils import (
-    DatasetWithMetadata,
-    StaticLabelContainer,
-    WPuQHouseholdReader,
-)
+from .containers import DatasetWithMetadata
+from .heat_pump import WPuQ
+from .preprocessing import shuffle_array
+from .readers import WPuQHouseholdReader
 from .wpuq_pv import get_first_last_moment_of_month
 
 
@@ -195,27 +193,6 @@ class WPuQHousehold(WPuQ):
     common_prefix = "wpuq_household"
     base_res_second = 60  # preprocessed at 1-minute resolution
 
-    def _get_pool_kernel_size(self) -> int | None:
-        resolution = self.process_option["resolution"]
-        if resolution == "1min":
-            return None
-        elif resolution == "15min":
-            return 15 * 60 // self.base_res_second
-        elif resolution == "30min":
-            return 30 * 60 // self.base_res_second
-        elif resolution == "1h":
-            return 60 * 60 // self.base_res_second
-        else:
-            raise NotImplementedError(f"Unsupported resolution: {resolution}")
-
-    def _max_monthly_timesteps(self) -> int:
-        """Max monthly timesteps after resolution adjustment (31-day month)."""
-        base_timesteps = 31 * 24 * 60 * 60 // self.base_res_second
-        pool_k = self._get_pool_kernel_size()
-        if pool_k is None:
-            return base_timesteps
-        return base_timesteps // pool_k
-
     def create_dataset(self) -> DatasetWithMetadata:
         _pool_kernel_size = self._get_pool_kernel_size()
         _max_timesteps = self._max_monthly_timesteps()
@@ -290,42 +267,5 @@ class WPuQHousehold(WPuQ):
         all_label_month = rearrange(all_label_month, "n -> n ()")
         all_label = {"month": all_label_month}
 
-        # normalize
-        scaling_factor = None
-        if self.process_option["normalize"]:
-            all_profile = self._normalize_fn(all_profile)
-            scaling_factor = self.scaling_factor
-
-        # pit
-        pit = None
-        assert not self.process_option["pit_transform"], (
-            "Not implemented. Deprecated. "
-            "Advised to use PIT in the PL model or PL data module."
-        )
-
-        # vectorize
-        if self.process_option["vectorize"]:
-            all_profile = self._vectorize_fn(all_profile)
-
-        # split
-        task_chunk = list(all_profile.split(num_sample_task, dim=0))
-        label_chunk = {}
-        for _label_name, _label in all_label.items():
-            label_chunk[_label_name] = list(_label.split(num_sample_task, dim=0))
-        profile_task_chunk = {}
-        label_task_chunk = {}
-        for task in self.record_tasks:
-            profile_task_chunk[task] = rearrange(task_chunk.pop(0), "n c l -> n l c")
-            label_task_chunk[task] = StaticLabelContainer({})
-            for _label_name, _label_list in label_chunk.items():
-                label_task_chunk[task] += StaticLabelContainer(
-                    {_label_name: _label_list.pop(0)}
-                )
-
-        dataset = DatasetWithMetadata(
-            profile=profile_task_chunk,
-            label=label_task_chunk,
-            pit=pit,
-            scaling_factor=scaling_factor,
-        )
-        return dataset
+        # shared pipeline: normalize, vectorize, split, wrap
+        return self._finalize_dataset(all_profile, all_label, num_sample_task)
