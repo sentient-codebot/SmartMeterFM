@@ -12,6 +12,7 @@ from tqdm import tqdm
 from ..utils.configuration import DataConfig
 from .base import TimeSeriesDataCollection
 from .containers import DatasetWithMetadata
+from .preprocessing import shuffle_array
 from .readers import WPuQReader
 
 
@@ -75,12 +76,6 @@ def process_dataset(list_dataset, year: int) -> dict[str, list[np.ndarray]]:
                 dataset_per_month[str(month)].append(ds)
 
     return dataset_per_month
-
-
-def shuffle_array(array: np.ndarray) -> np.ndarray:
-    rng = np.random.default_rng()
-    indices = rng.permutation(len(array))
-    return array[indices]
 
 
 class PreHeatPump:

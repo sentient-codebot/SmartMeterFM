@@ -104,18 +104,6 @@ class DatasetWithMetadata(NamedTuple):
     pit: Callable[[Tensor], Tensor] | None = None
 
 
-class DataTransform(NamedTuple):
-    name: str
-    transform: Callable[[Tensor], Tensor]
-    inverse_transform: Callable[[Tensor], Tensor]
-    returned_args: tuple[Tensor] = ()
-
-
-class DataTransform(DataTransform):
-    def __repr__(self):
-        return f"DataTransform({self.name})"
-
-
 class DataShapeType(enum.Enum):
     """
     Enum class for data shape
