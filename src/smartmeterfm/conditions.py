@@ -39,6 +39,7 @@ Checklist for new conditions:
 
 from __future__ import annotations
 
+import calendar
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated
@@ -156,6 +157,21 @@ def _month_to_season(month: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Calendar helpers
+# ---------------------------------------------------------------------------
+
+
+def _derive_calendar_from_year_month(year: int, month: int) -> tuple[int, int]:
+    """Return ``(first_day_of_week, month_length_offset)`` for *year* / *month*.
+
+    *month* is 0-indexed (0 = January).  ``month_length_offset`` is
+    ``num_days - 28`` so it fits into the 0-3 range used by the embedders.
+    """
+    weekday, days = calendar.monthrange(year, month + 1)
+    return weekday, days - 28
+
+
+# ---------------------------------------------------------------------------
 # Dataset-specific condition classes
 # ---------------------------------------------------------------------------
 
@@ -182,6 +198,16 @@ class WPuQCondition(SampleCondition):
     year: Annotated[int | None, ConditionFieldMeta()] = None
     first_day_of_week: Annotated[int | None, ConditionFieldMeta()] = None  # 0-6
     month_length: Annotated[int | None, ConditionFieldMeta()] = None  # 0-3
+
+    @model_validator(mode="after")
+    def _derive_calendar_fields(self) -> WPuQCondition:
+        if self.year is not None and self.month is not None:
+            weekday, ml = _derive_calendar_from_year_month(self.year, self.month)
+            if self.first_day_of_week is None:
+                object.__setattr__(self, "first_day_of_week", weekday)
+            if self.month_length is None:
+                object.__setattr__(self, "month_length", ml)
+        return self
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> WPuQCondition:
@@ -217,6 +243,16 @@ class LCLCondition(SampleCondition):
     year: Annotated[int | None, ConditionFieldMeta()] = None
     first_day_of_week: Annotated[int | None, ConditionFieldMeta()] = None  # 0-6
     month_length: Annotated[int | None, ConditionFieldMeta()] = None  # 0-3
+
+    @model_validator(mode="after")
+    def _derive_calendar_fields(self) -> LCLCondition:
+        if self.year is not None and self.month is not None:
+            weekday, ml = _derive_calendar_from_year_month(self.year, self.month)
+            if self.first_day_of_week is None:
+                object.__setattr__(self, "first_day_of_week", weekday)
+            if self.month_length is None:
+                object.__setattr__(self, "month_length", ml)
+        return self
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> LCLCondition:

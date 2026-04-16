@@ -16,7 +16,6 @@ Example:
 """
 
 import argparse
-import calendar
 import json
 import os
 
@@ -31,10 +30,18 @@ import torch.nn.functional as F
 from einops import rearrange
 from tqdm import tqdm
 
+from smartmeterfm.conditions import LCLCondition, WPuQCondition
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.utils.configuration import DataConfig
+
+
+_CONDITION_CLASS = {
+    "wpuq": WPuQCondition,
+    "wpuq_household": WPuQCondition,
+    "lcl_electricity": LCLCondition,
+}
 
 
 def downsample(data: torch.Tensor, scale_factor: int) -> torch.Tensor:
@@ -455,22 +462,12 @@ def main():
             lr_real.view(1, 1, -1), size=seq_length, mode="linear", align_corners=False
         ).squeeze()  # [seq_length]
 
-        # Create condition with position/masking info when year is available
-        condition = {
-            "month": torch.tensor([[month]], dtype=torch.long, device=args.device)
-        }
-        if "year" in test_labels:
-            year = test_labels["year"][idx].item()
-            weekday, days = calendar.monthrange(year, month + 1)
-            condition["year"] = torch.tensor(
-                [[year]], dtype=torch.long, device=args.device
-            )
-            condition["first_day_of_week"] = torch.tensor(
-                [[weekday]], dtype=torch.long, device=args.device
-            )
-            condition["month_length"] = torch.tensor(
-                [[days - 28]], dtype=torch.long, device=args.device
-            )
+        # Build condition via the typed condition class; calendar fields
+        # (first_day_of_week, month_length) are auto-derived when year is set.
+        CondClass = _CONDITION_CLASS[args.dataset]
+        year = test_labels["year"][idx].item() if "year" in test_labels else None
+        cond = CondClass(month=month, year=year)
+        condition = cond.to_tensor_dict(batch_size=1, device=args.device)
 
         # Super-resolve (model in patch space, projection in real space)
         sr_samples_real = super_resolve_with_flow(

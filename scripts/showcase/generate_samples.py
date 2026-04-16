@@ -19,13 +19,18 @@ Example:
 """
 
 import argparse
-import calendar
 import os
 
 import torch
 from tqdm import tqdm
 
-from smartmeterfm.conditions import WPuQCondition
+from smartmeterfm.conditions import LCLCondition, WPuQCondition
+
+
+_CONDITION_CLASS = {
+    "wpuq": WPuQCondition,
+    "lcl": LCLCondition,
+}
 
 
 def generate_flow_samples(
@@ -37,6 +42,7 @@ def generate_flow_samples(
     cfg_scale: float = 1.0,
     device: str = "cuda",
     year: int | None = None,
+    dataset: str = "wpuq",
 ) -> dict[int, torch.Tensor]:
     """Generate samples using a trained Flow Matching model.
 
@@ -49,6 +55,7 @@ def generate_flow_samples(
         cfg_scale: Classifier-free guidance scale.
         device: Device to use for generation.
         year: Optional year for deriving position/masking conditions.
+        dataset: Dataset/condition type ("wpuq" or "lcl").
 
     Returns:
         Dictionary mapping month index to generated samples tensor.
@@ -81,18 +88,11 @@ def generate_flow_samples(
             curr_batch_size = min(batch_size, remaining)
             remaining -= curr_batch_size
 
-            # Create condition tensor — always derive month_length so padding
-            # masks work correctly even when --year is not provided.
-            effective_year = year if year is not None else 2013
-            weekday, days = calendar.monthrange(effective_year, month + 1)
-            cond_kwargs: dict = {
-                "month": month,
-                "first_day_of_week": weekday,
-                "month_length": days - 28,
-            }
-            if year is not None:
-                cond_kwargs["year"] = year
-            cond = WPuQCondition(**cond_kwargs)
+            # Create condition tensor — calendar fields (first_day_of_week,
+            # month_length) are auto-derived by the condition class when
+            # both year and month are provided.
+            CondClass = _CONDITION_CLASS[dataset]
+            cond = CondClass(month=month, year=year)
             condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 
             # Generate samples
@@ -157,6 +157,7 @@ def generate_vae_samples(
     batch_size: int = 256,
     device: str = "cuda",
     year: int | None = None,
+    dataset: str = "wpuq",
 ) -> dict[int, torch.Tensor]:
     """Generate samples using a trained VAE model.
 
@@ -167,6 +168,7 @@ def generate_vae_samples(
         batch_size: Batch size for generation.
         device: Device to use for generation.
         year: Optional year for deriving position/masking conditions.
+        dataset: Dataset/condition type ("wpuq" or "lcl").
 
     Returns:
         Dictionary mapping month index to generated samples tensor.
@@ -193,18 +195,11 @@ def generate_vae_samples(
             curr_batch_size = min(batch_size, remaining)
             remaining -= curr_batch_size
 
-            # Create condition tensor — always derive month_length so padding
-            # masks work correctly even when --year is not provided.
-            effective_year = year if year is not None else 2013
-            weekday, days = calendar.monthrange(effective_year, month + 1)
-            cond_kwargs: dict = {
-                "month": month,
-                "first_day_of_week": weekday,
-                "month_length": days - 28,
-            }
-            if year is not None:
-                cond_kwargs["year"] = year
-            cond = WPuQCondition(**cond_kwargs)
+            # Create condition tensor — calendar fields (first_day_of_week,
+            # month_length) are auto-derived by the condition class when
+            # both year and month are provided.
+            CondClass = _CONDITION_CLASS[dataset]
+            cond = CondClass(month=month, year=year)
             condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 
             with torch.no_grad():
@@ -297,6 +292,13 @@ def main():
         help="Type of model to use for generation",
     )
     parser.add_argument(
+        "--dataset",
+        type=str,
+        choices=["wpuq", "lcl"],
+        default="wpuq",
+        help="Dataset/condition type (default: wpuq)",
+    )
+    parser.add_argument(
         "--checkpoint",
         type=str,
         required=True,
@@ -361,6 +363,7 @@ def main():
             raise ValueError(f"Invalid month: {month}. Must be 0-11.")
 
     print(f"Model type: {args.model_type}")
+    print(f"Dataset: {args.dataset}")
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Number of samples per month: {args.num_samples}")
     print(f"Months: {[m + 1 for m in args.months]}")
@@ -377,6 +380,7 @@ def main():
             cfg_scale=args.cfg_scale,
             device=args.device,
             year=args.year,
+            dataset=args.dataset,
         )
     else:  # vae
         samples_by_month = generate_vae_samples(
@@ -386,6 +390,7 @@ def main():
             batch_size=args.batch_size,
             device=args.device,
             year=args.year,
+            dataset=args.dataset,
         )
 
     # Save samples
