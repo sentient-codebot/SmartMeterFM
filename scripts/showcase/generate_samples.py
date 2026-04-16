@@ -81,15 +81,17 @@ def generate_flow_samples(
             curr_batch_size = min(batch_size, remaining)
             remaining -= curr_batch_size
 
-            # Create condition tensor
-            cond_kwargs = {"month": month}
+            # Create condition tensor — always derive month_length so padding
+            # masks work correctly even when --year is not provided.
+            effective_year = year if year is not None else 2013
+            weekday, days = calendar.monthrange(effective_year, month + 1)
+            cond_kwargs: dict = {
+                "month": month,
+                "first_day_of_week": weekday,
+                "month_length": days - 28,
+            }
             if year is not None:
-                weekday, days = calendar.monthrange(year, month + 1)
-                cond_kwargs.update(
-                    year=year,
-                    first_day_of_week=weekday,
-                    month_length=days - 28,
-                )
+                cond_kwargs["year"] = year
             cond = WPuQCondition(**cond_kwargs)
             condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 
@@ -128,7 +130,9 @@ def generate_flow_samples(
                     dt = 1.0 / num_steps
                     for step in range(num_steps):
                         t = torch.full((curr_batch_size,), step * dt, device=device)
-                        velocity = model.model(x_t, t, y=condition)
+                        velocity = model.model(
+                            x_t, t, y=condition, valid_length=valid_length
+                        )
                         x_t = x_t + velocity * dt
                     x_1 = x_t
 
@@ -189,15 +193,17 @@ def generate_vae_samples(
             curr_batch_size = min(batch_size, remaining)
             remaining -= curr_batch_size
 
-            # Create condition tensor
-            cond_kwargs = {"month": month}
+            # Create condition tensor — always derive month_length so padding
+            # masks work correctly even when --year is not provided.
+            effective_year = year if year is not None else 2013
+            weekday, days = calendar.monthrange(effective_year, month + 1)
+            cond_kwargs: dict = {
+                "month": month,
+                "first_day_of_week": weekday,
+                "month_length": days - 28,
+            }
             if year is not None:
-                weekday, days = calendar.monthrange(year, month + 1)
-                cond_kwargs.update(
-                    year=year,
-                    first_day_of_week=weekday,
-                    month_length=days - 28,
-                )
+                cond_kwargs["year"] = year
             cond = WPuQCondition(**cond_kwargs)
             condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
 

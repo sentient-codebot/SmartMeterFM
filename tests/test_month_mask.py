@@ -122,6 +122,76 @@ class TestConvertOffsetMonthLength:
 
 
 # ---------------------------------------------------------------------------
+# TestZeroPadding
+# ---------------------------------------------------------------------------
+
+
+class TestZeroPadding:
+    """Test _zero_padding on folded (batch, seq_len, num_ch) tensors.
+
+    valid_length is in FULL (unfolded) timestep units, while x has folded shape.
+    """
+
+    @pytest.mark.parametrize("steps_per_day", [48, 96])
+    def test_feb_28_padding_zeroed(self, steps_per_day):
+        """February (28 days): last 3 day-patches must be zeroed."""
+        x = torch.ones(1, 31, steps_per_day)
+        valid_length = torch.tensor([28 * steps_per_day])
+        result = FlowModelPL._zero_padding(x, valid_length)
+        assert torch.all(result[0, :28] == 1.0)
+        assert torch.all(result[0, 28:] == 0.0)
+
+    @pytest.mark.parametrize("steps_per_day", [48, 96])
+    def test_jan_31_no_padding(self, steps_per_day):
+        """January (31 days): nothing should be zeroed."""
+        x = torch.ones(1, 31, steps_per_day)
+        valid_length = torch.tensor([31 * steps_per_day])
+        result = FlowModelPL._zero_padding(x, valid_length)
+        assert torch.equal(result, x)
+
+    def test_apr_30_one_day_padding(self):
+        """April (30 days): last 1 day-patch zeroed."""
+        x = torch.randn(1, 31, 96)
+        valid_length = torch.tensor([30 * 96])
+        result = FlowModelPL._zero_padding(x, valid_length)
+        assert torch.all(result[0, 30:] == 0.0)
+        assert torch.equal(result[0, :30], x[0, :30])
+
+    def test_mixed_batch(self):
+        """Batch with Feb (28d) and Jan (31d)."""
+        x = torch.randn(2, 31, 96)
+        valid_length = torch.tensor([28 * 96, 31 * 96])
+        result = FlowModelPL._zero_padding(x, valid_length)
+        # Feb: padding zeroed
+        assert torch.all(result[0, 28:] == 0.0)
+        assert torch.equal(result[0, :28], x[0, :28])
+        # Jan: untouched
+        assert torch.equal(result[1], x[1])
+
+    def test_random_noise_padding_zeroed(self):
+        """Padding positions in random noise must be exactly zero."""
+        x = torch.randn(4, 31, 96)
+        valid_length = torch.tensor([28, 29, 30, 31]) * 96
+        result = FlowModelPL._zero_padding(x, valid_length)
+        for i, days in enumerate([28, 29, 30, 31]):
+            if days < 31:
+                assert torch.all(result[i, days:] == 0.0), (
+                    f"Padding not zeroed for {days}-day month"
+                )
+
+    @pytest.mark.parametrize(
+        "cls",
+        [cls for cls in ALL_MODEL_CLASSES if hasattr(cls, "_zero_padding")],
+    )
+    def test_all_classes_identical(self, cls):
+        x = torch.randn(2, 31, 96)
+        valid_length = torch.tensor([28 * 96, 31 * 96])
+        result = cls._zero_padding(x, valid_length)
+        ref = FlowModelPL._zero_padding(x, valid_length)
+        assert torch.equal(result, ref)
+
+
+# ---------------------------------------------------------------------------
 # TestCreateLossMask
 # ---------------------------------------------------------------------------
 
@@ -244,6 +314,7 @@ class TestMaskPipelineIntegration:
     """End-to-end: calendar -> month_length -> valid_length -> mask -> zeroed padding."""
 
     STEPS_PER_DAY = 96
+    SEQ_LEN = 31  # folded length (days)
     FULL_LENGTH = 31 * 96  # 2976
 
     def _pipeline(self, year: int, month_0: int):
@@ -258,10 +329,10 @@ class TestMaskPipelineIntegration:
         )
         return start_pos, mask, valid_length
 
-    def test_feb_28_padding_zeroed(self):
+    def test_feb_28_loss_mask_zeroed(self):
         start_pos, mask, valid_length = self._pipeline(2023, 1)  # Feb 2023
         assert valid_length == 2688
-        # Simulate profile * mask
+        # Simulate profile * mask (flat space)
         profile = torch.randn(1, self.FULL_LENGTH)
         masked = profile * mask
         assert torch.all(masked[0, 2688:] == 0.0)
@@ -287,3 +358,44 @@ class TestMaskPipelineIntegration:
         assert torch.all(masked[0, 2688:] == 0.0)
         # Jan: no padding
         assert torch.equal(masked[1], profile[1])
+
+    def test_feb_28_zero_padding_folded(self):
+        """_zero_padding on folded tensor must zero the last 3 day-patches."""
+        _, _, valid_length = self._pipeline(2023, 1)  # Feb 2023
+        x = torch.randn(1, self.SEQ_LEN, self.STEPS_PER_DAY)
+        result = FlowModelPL._zero_padding(x, torch.tensor([valid_length]))
+        assert torch.all(result[0, 28:] == 0.0)
+        assert torch.equal(result[0, :28], x[0, :28])
+
+    def test_mixed_batch_zero_padding_folded(self):
+        """_zero_padding on folded tensor with mixed-length batch."""
+        _, days_feb = calendar.monthrange(2023, 2)
+        _, days_jan = calendar.monthrange(2024, 1)
+        ml = torch.tensor([days_feb - 28, days_jan - 28])
+        valid = FlowModelPL._convert_offset_month_length(ml, 28, self.STEPS_PER_DAY)
+
+        x = torch.randn(2, self.SEQ_LEN, self.STEPS_PER_DAY)
+        result = FlowModelPL._zero_padding(x, valid)
+
+        # Feb: last 3 days zeroed, first 28 untouched
+        assert torch.all(result[0, 28:] == 0.0)
+        assert torch.equal(result[0, :28], x[0, :28])
+        # Jan: fully untouched
+        assert torch.equal(result[1], x[1])
+
+    def test_loss_mask_and_zero_padding_agree(self):
+        """Loss mask (flat) and _zero_padding (folded) must zero the same positions."""
+        for month_0 in range(12):
+            _, days = calendar.monthrange(2023, month_0 + 1)
+            ml = torch.tensor([days - 28])
+            valid = FlowModelPL._convert_offset_month_length(ml, 28, self.STEPS_PER_DAY)
+            # Loss mask path (flat -> fold)
+            loss_mask = FlowModelPL._create_loss_mask(valid, self.FULL_LENGTH)
+            loss_mask_folded = loss_mask.view(1, self.SEQ_LEN, self.STEPS_PER_DAY)
+            # _zero_padding path (folded directly)
+            x = torch.ones(1, self.SEQ_LEN, self.STEPS_PER_DAY)
+            zero_padded = FlowModelPL._zero_padding(x, valid)
+            # Both must agree on which positions are zero
+            assert torch.equal((loss_mask_folded == 0.0), (zero_padded == 0.0)), (
+                f"Disagreement for month {month_0 + 1} ({days} days)"
+            )

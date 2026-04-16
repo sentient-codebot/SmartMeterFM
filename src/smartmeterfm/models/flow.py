@@ -616,11 +616,16 @@ class FlowModelPL(pl.LightningModule):
         """Zero out padded positions in x beyond each sample's valid_length.
 
         Args:
-            x: (batch, seq_len, num_ch)
-            valid_length: (batch,) number of valid sequence positions per sample
+            x: (batch, seq_len, num_ch) — seq_len is the folded (patch) length
+            valid_length: (batch,) valid length in FULL (unfolded) timestep units
         """
-        seq_len = x.shape[1]
-        mask = torch.arange(seq_len, device=x.device).unsqueeze(0) < valid_length.unsqueeze(1)
+        folded_len = x.shape[1]
+        num_ch = x.shape[2]
+        # Convert valid_length from full units to folded (patch) units
+        valid_folded = valid_length // num_ch
+        mask = torch.arange(folded_len, device=x.device).unsqueeze(
+            0
+        ) < valid_folded.unsqueeze(1)
         return x * mask.unsqueeze(-1)
 
     def training_step(

@@ -4,6 +4,7 @@ Generates samples at regular intervals during training using the EMA model,
 saves them to disk, and logs visualization figures to wandb/mlflow.
 """
 
+import calendar
 import copy
 import logging
 import os
@@ -15,7 +16,7 @@ import pytorch_lightning as pl
 import torch
 from einops import rearrange
 
-from ...conditions import WPuQCondition
+from ...conditions import SampleCondition, WPuQCondition
 from ...utils.configuration import SampleConfig
 from ..plot import plot_sampled_data_v2
 
@@ -40,6 +41,7 @@ class PeriodicSamplingCallback(pl.Callback):
         log_wandb: bool = False,
         log_mlflow: bool = False,
         profile_inverse_transform: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        condition_class: type[SampleCondition] = WPuQCondition,
     ):
         super().__init__()
         self.sample_every = sample_every
@@ -49,6 +51,7 @@ class PeriodicSamplingCallback(pl.Callback):
         self.log_wandb = log_wandb
         self.log_mlflow = log_mlflow
         self._inverse_transform = profile_inverse_transform
+        self._condition_class = condition_class
 
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._pending: Future | None = None
@@ -104,6 +107,9 @@ class PeriodicSamplingCallback(pl.Callback):
                 cfg_scale=cfg_scale,
             )
 
+        create_mask = getattr(pl_module, "create_mask", False)
+        steps_per_day = getattr(pl_module, "steps_per_day", 96)
+
         self._pending = self._executor.submit(
             self._generate_and_log,
             velocity_model,
@@ -112,6 +118,8 @@ class PeriodicSamplingCallback(pl.Callback):
             device,
             step,
             cfg_scale,
+            create_mask,
+            steps_per_day,
         )
 
     def _generate_and_log(
@@ -122,12 +130,16 @@ class PeriodicSamplingCallback(pl.Callback):
         device,
         step,
         cfg_scale,
+        create_mask,
+        steps_per_day,
     ):
         """Run ODE integration, save samples, and plot. Runs in background thread.
 
         Returns:
             Tuple of (fig_path, step) for the main thread to log, or None on failure.
         """
+        from smartmeterfm.models.flow import FlowModelPL
+
         num_sample = self.sample_config.num_sample
         num_steps = self.sample_config.num_sampling_step
         batch_size = self.sample_config.val_batch_size
@@ -145,11 +157,28 @@ class PeriodicSamplingCallback(pl.Callback):
             for month in self.months:
                 all_samples = []
                 remaining = num_sample
+
+                # Derive month_length for padding masks (default non-leap year)
+                weekday, days = calendar.monthrange(2013, month + 1)
+                month_length = days - 28
+
                 while remaining > 0:
                     bs = min(batch_size, remaining)
                     x_t = torch.randn(bs, seq_len, num_ch, device=device)
-                    cond = WPuQCondition(month=month)
+                    cond = self._condition_class(
+                        month=month,
+                        first_day_of_week=weekday,
+                        month_length=month_length,
+                    )
                     condition = cond.to_tensor_dict(batch_size=bs, device=device)
+
+                    # Compute valid_length and zero padding in initial noise
+                    valid_length = None
+                    if create_mask and "month_length" in condition:
+                        valid_length = FlowModelPL._convert_offset_month_length(
+                            condition["month_length"], 28, steps_per_day
+                        ).squeeze(1)
+                        x_t = FlowModelPL._zero_padding(x_t, valid_length)
 
                     # For CFG wrapper, update labels per batch
                     if cfg_scale != 1.0:
@@ -164,10 +193,16 @@ class PeriodicSamplingCallback(pl.Callback):
                         for i in range(num_steps):
                             t = torch.full((bs,), i * dt, device=device)
                             if cfg_scale != 1.0:
-                                v = velocity_model(x_t, t)
+                                v = velocity_model(x_t, t, valid_length=valid_length)
                             else:
-                                v = velocity_model(x_t, t, c=condition)
+                                v = velocity_model(
+                                    x_t, t, c=condition, valid_length=valid_length
+                                )
                             x_t = x_t + v * dt
+
+                    # Zero out padded positions in output
+                    if valid_length is not None:
+                        x_t = FlowModelPL._zero_padding(x_t, valid_length)
 
                     all_samples.append(x_t.cpu())
                     remaining -= bs
