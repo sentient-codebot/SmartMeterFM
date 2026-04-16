@@ -1,4 +1,5 @@
 #!/bin/bash
+# reruns all metrics for three tasks using existing data.
 
 #SBATCH --job-name="lcl-full-eval"
 #SBATCH --partition=gpu_a100
