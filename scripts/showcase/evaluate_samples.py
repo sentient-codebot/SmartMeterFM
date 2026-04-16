@@ -39,7 +39,6 @@ from smartmeterfm.utils.eval import (
     ks_test_d,
     ks_test_p,
     metric_pearsonr,
-    peak_load_error,
     source_mean,
     source_std,
     target_mean,
@@ -108,13 +107,44 @@ def load_test_data(
 
 def crps_metric(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """CRPS between two empirical distributions, averaged over dimensions."""
-    return crps_empirical_vs_empirical(target, source).mean()
+    result = crps_empirical_vs_empirical(target.flatten(1), source.flatten(1))
+    if torch.isnan(result).any():
+        n_nan = torch.isnan(result).sum().item()
+        logging.warning(f"CRPS: {n_nan}/{result.numel()} dimensions produced NaN")
+    return result.mean()
 
 
 def pearsonr_metric(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """Absolute difference in mean autocorrelation (shift=1) between distributions."""
     result = metric_pearsonr(source, target, shift=1)
-    return torch.abs(result["source"].mean() - result["target"].mean())
+    src = result["source"]
+    tgt = result["target"]
+    n_nan_src = torch.isnan(src).sum().item()
+    n_nan_tgt = torch.isnan(tgt).sum().item()
+    if n_nan_src > 0 or n_nan_tgt > 0:
+        logging.warning(
+            f"PearsonR: {n_nan_src}/{len(src)} source and {n_nan_tgt}/{len(tgt)} "
+            f"target samples produced NaN (constant sequences), filtering them out"
+        )
+    src_mean = src[~torch.isnan(src)].mean()
+    tgt_mean = tgt[~torch.isnan(tgt)].mean()
+    return torch.abs(src_mean - tgt_mean)
+
+
+def peak_load_error_metric(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Peak load error between two empirical distributions."""
+    source_2d = source.flatten(1)
+    target_2d = target.flatten(1)
+    source_peaks = source_2d.max(dim=1, keepdim=True).values
+    target_peaks = target_2d.max(dim=1, keepdim=True).values
+    source_neg = (-source_2d).max(dim=1, keepdim=True).values
+    target_neg = (-target_2d).max(dim=1, keepdim=True).values
+    pos_error = crps_empirical_vs_empirical(target_peaks, source_peaks).mean()
+    neg_error = crps_empirical_vs_empirical(target_neg, source_neg).mean()
+    result = pos_error + neg_error
+    if torch.isnan(result):
+        logging.warning("PeakLoadError: result is NaN")
+    return result
 
 
 def sym_quantile_metric(
@@ -125,13 +155,18 @@ def sym_quantile_metric(
     Computes per-sample quantiles for both distributions and compares them
     using CRPS, avoiding the dim=0 issue in sym_quantile_error with 2D targets.
     """
-    s_upper = torch.quantile(source, quantile, dim=1).unsqueeze(1)
-    t_upper = torch.quantile(target, quantile, dim=1).unsqueeze(1)
-    s_lower = torch.quantile(source, 1 - quantile, dim=1).unsqueeze(1)
-    t_lower = torch.quantile(target, 1 - quantile, dim=1).unsqueeze(1)
+    source_2d = source.flatten(1)
+    target_2d = target.flatten(1)
+    s_upper = torch.quantile(source_2d, quantile, dim=1).unsqueeze(1)
+    t_upper = torch.quantile(target_2d, quantile, dim=1).unsqueeze(1)
+    s_lower = torch.quantile(source_2d, 1 - quantile, dim=1).unsqueeze(1)
+    t_lower = torch.quantile(target_2d, 1 - quantile, dim=1).unsqueeze(1)
     upper = crps_empirical_vs_empirical(t_upper, s_upper).mean()
     lower = crps_empirical_vs_empirical(t_lower, s_lower).mean()
-    return upper + lower
+    result = upper + lower
+    if torch.isnan(result):
+        logging.warning("SymQuantileError: result is NaN")
+    return result
 
 
 def compute_metrics_per_month(
@@ -169,7 +204,7 @@ def compute_metrics_per_month(
         "target_std": target_std,
         "CRPS": crps_metric,
         "PearsonR_diff": pearsonr_metric,
-        "PeakLoadError": peak_load_error,
+        "PeakLoadError": peak_load_error_metric,
         "SymQuantileError_99": sym_quantile_metric,
     }
     multi_metric = MultiMetric(metric_fns, compute_on_cpu=True)

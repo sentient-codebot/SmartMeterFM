@@ -1,3 +1,4 @@
+import logging
 import os
 import traceback
 from collections import namedtuple
@@ -593,8 +594,9 @@ class MultiMetric:
                 if not isinstance(result, torch.Tensor):
                     result = _to_tensor(result, device=self.device)
                 results[name] = result
-            except Exception:
+            except Exception as e:
                 traceback.print_exc()
+                logging.warning(f"MultiMetric: {name} raised {type(e).__name__}: {e}")
                 results[name] = torch.tensor(float("nan"), device=self.device)
 
         return results

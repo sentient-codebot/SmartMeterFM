@@ -30,21 +30,7 @@ srun python scripts/showcase/evaluate_samples.py \
 
 echo "**************** [${TIMEID}] evaluate_samples completed. **************************"
 
-# 2. Imputation: MCAR 20%
-python scripts/showcase/imputation_demo.py \
-    --checkpoint $CKPT \
-    --dataset lcl_electricity \
-    --data_root data/lcl_electricity/ \
-    --imputation_type mcar \
-    --missing_rate 0.2 \
-    --num_samples 10 \
-    --num_test_series 100 \
-    --num_steps 100 \
-    --output_dir results/imputation/${TIMEID}/mcar_20
-
-echo "**************** [${TIMEID}] MCAR imputation completed. **************************"
-
-# 3. Imputation: MNAR consecutive 20%
+# 2. Imputation: MNAR consecutive 20%
 python scripts/showcase/imputation_demo.py \
     --checkpoint $CKPT \
     --dataset lcl_electricity \
@@ -58,20 +44,7 @@ python scripts/showcase/imputation_demo.py \
 
 echo "**************** [${TIMEID}] MNAR imputation completed. **************************"
 
-# 4. Super-resolution: 2x
-python scripts/showcase/super_resolution_demo.py \
-    --checkpoint $CKPT \
-    --dataset lcl_electricity \
-    --data_root data/lcl_electricity/ \
-    --scale_factor 2 \
-    --num_samples 10 \
-    --num_test_series 100 \
-    --num_steps 100 \
-    --output_dir results/super_resolution/${TIMEID}/2x
-
-echo "**************** [${TIMEID}] 2x super-resolution completed. **************************"
-
-# 5. Super-resolution: 4x
+# 3. Super-resolution: 4x
 python scripts/showcase/super_resolution_demo.py \
     --checkpoint $CKPT \
     --dataset lcl_electricity \
