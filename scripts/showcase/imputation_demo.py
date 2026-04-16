@@ -33,6 +33,12 @@ from einops import rearrange
 from tqdm import tqdm
 
 from smartmeterfm.conditions import LCLCondition, WPuQCondition
+from smartmeterfm.utils.eval import (
+    calculate_pearsonr_per_sample,
+    crps_empirical_dimwise,
+    peak_load_error,
+    sym_quantile_error,
+)
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
@@ -219,11 +225,30 @@ def evaluate_imputation(
     )
     uncertainty = imputed_at_missing.std(dim=0).mean().item()
 
+    # CRPS at missing positions
+    crps_per_dim = crps_empirical_dimwise(imputed, original.flatten())
+    crps_missing = crps_per_dim[missing_mask.flatten()].mean().item()
+
+    # Peak Load Error and Symmetric Quantile Error (full sequence)
+    ple = peak_load_error(imputed, original.flatten()).item()
+    sqe = sym_quantile_error(imputed, original.flatten(), quantile=0.99).item()
+
+    # Autocorrelation comparison (Pearson R with shift=1)
+    source_acorr = calculate_pearsonr_per_sample(imputed, shift=1).mean().item()
+    target_acorr = calculate_pearsonr_per_sample(
+        original.flatten().unsqueeze(0), shift=1
+    ).item()
+    pearsonr_diff = abs(source_acorr - target_acorr)
+
     return {
         "mse": mse,
         "mae": mae,
         "rmse": rmse,
         "uncertainty": uncertainty,
+        "crps": crps_missing,
+        "peak_load_error": ple,
+        "sym_quantile_error_99": sqe,
+        "pearsonr_diff": pearsonr_diff,
         "num_missing": missing_mask.sum().item(),
         "missing_rate_actual": missing_mask.float().mean().item(),
     }
@@ -447,6 +472,13 @@ def main():
         "mae": sum(m["mae"] for m in all_metrics) / len(all_metrics),
         "rmse": sum(m["rmse"] for m in all_metrics) / len(all_metrics),
         "uncertainty": sum(m["uncertainty"] for m in all_metrics) / len(all_metrics),
+        "crps": sum(m["crps"] for m in all_metrics) / len(all_metrics),
+        "peak_load_error": sum(m["peak_load_error"] for m in all_metrics)
+        / len(all_metrics),
+        "sym_quantile_error_99": sum(m["sym_quantile_error_99"] for m in all_metrics)
+        / len(all_metrics),
+        "pearsonr_diff": sum(m["pearsonr_diff"] for m in all_metrics)
+        / len(all_metrics),
     }
 
     # Save results
@@ -483,10 +515,14 @@ def main():
     print(f"Number of test series: {len(test_profiles)}")
     print(f"Samples per series: {args.num_samples}")
     print("-" * 50)
-    print(f"Average MSE:         {avg_metrics['mse']:.6f}")
-    print(f"Average MAE:         {avg_metrics['mae']:.6f}")
-    print(f"Average RMSE:        {avg_metrics['rmse']:.6f}")
-    print(f"Average Uncertainty: {avg_metrics['uncertainty']:.6f}")
+    print(f"Average MSE:                {avg_metrics['mse']:.6f}")
+    print(f"Average MAE:                {avg_metrics['mae']:.6f}")
+    print(f"Average RMSE:               {avg_metrics['rmse']:.6f}")
+    print(f"Average Uncertainty:        {avg_metrics['uncertainty']:.6f}")
+    print(f"Average CRPS:               {avg_metrics['crps']:.6f}")
+    print(f"Average PeakLoadError:      {avg_metrics['peak_load_error']:.6f}")
+    print(f"Average SymQuantileErr_99:  {avg_metrics['sym_quantile_error_99']:.6f}")
+    print(f"Average PearsonR Diff:      {avg_metrics['pearsonr_diff']:.6f}")
     print("=" * 50)
     print(f"\nResults saved to {results_path}")
     print(f"Metrics saved to {json_path}")

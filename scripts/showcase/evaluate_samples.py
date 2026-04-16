@@ -34,9 +34,12 @@ from smartmeterfm.utils.eval import (
     MkMMD,
     MultiMetric,
     calculate_frechet,
+    crps_empirical_vs_empirical,
     kl_divergence,
     ks_test_d,
     ks_test_p,
+    metric_pearsonr,
+    peak_load_error,
     source_mean,
     source_std,
     target_mean,
@@ -103,6 +106,34 @@ def load_test_data(
     return test_profiles, test_labels["month"], year_labels
 
 
+def crps_metric(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """CRPS between two empirical distributions, averaged over dimensions."""
+    return crps_empirical_vs_empirical(target, source).mean()
+
+
+def pearsonr_metric(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Absolute difference in mean autocorrelation (shift=1) between distributions."""
+    result = metric_pearsonr(source, target, shift=1)
+    return torch.abs(result["source"].mean() - result["target"].mean())
+
+
+def sym_quantile_metric(
+    source: torch.Tensor, target: torch.Tensor, quantile: float = 0.99
+) -> torch.Tensor:
+    """Symmetric quantile error between two distributions.
+
+    Computes per-sample quantiles for both distributions and compares them
+    using CRPS, avoiding the dim=0 issue in sym_quantile_error with 2D targets.
+    """
+    s_upper = torch.quantile(source, quantile, dim=1).unsqueeze(1)
+    t_upper = torch.quantile(target, quantile, dim=1).unsqueeze(1)
+    s_lower = torch.quantile(source, 1 - quantile, dim=1).unsqueeze(1)
+    t_lower = torch.quantile(target, 1 - quantile, dim=1).unsqueeze(1)
+    upper = crps_empirical_vs_empirical(t_upper, s_upper).mean()
+    lower = crps_empirical_vs_empirical(t_lower, s_lower).mean()
+    return upper + lower
+
+
 def compute_metrics_per_month(
     generated: dict[int, torch.Tensor],
     real_profiles: torch.Tensor,
@@ -136,6 +167,10 @@ def compute_metrics_per_month(
         "source_std": source_std,
         "target_mean": target_mean,
         "target_std": target_std,
+        "CRPS": crps_metric,
+        "PearsonR_diff": pearsonr_metric,
+        "PeakLoadError": peak_load_error,
+        "SymQuantileError_99": sym_quantile_metric,
     }
     multi_metric = MultiMetric(metric_fns, compute_on_cpu=True)
 

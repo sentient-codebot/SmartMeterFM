@@ -31,6 +31,12 @@ from einops import rearrange
 from tqdm import tqdm
 
 from smartmeterfm.conditions import LCLCondition, WPuQCondition
+from smartmeterfm.utils.eval import (
+    calculate_pearsonr_per_sample,
+    crps_empirical_dimwise,
+    peak_load_error,
+    sym_quantile_error,
+)
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
@@ -231,6 +237,20 @@ def evaluate_super_resolution(
         (mse_baseline - mse_sr) / mse_baseline * 100 if mse_baseline > 0 else 0
     )
 
+    # CRPS (how well SR samples cover the true values)
+    crps = crps_empirical_dimwise(sr_samples, original_hr.flatten()).mean().item()
+
+    # Peak Load Error and Symmetric Quantile Error
+    ple = peak_load_error(sr_samples, original_hr.flatten()).item()
+    sqe = sym_quantile_error(sr_samples, original_hr.flatten(), quantile=0.99).item()
+
+    # Autocorrelation comparison (Pearson R with shift=1)
+    source_acorr = calculate_pearsonr_per_sample(sr_samples, shift=1).mean().item()
+    target_acorr = calculate_pearsonr_per_sample(
+        original_hr.flatten().unsqueeze(0), shift=1
+    ).item()
+    pearsonr_diff = abs(source_acorr - target_acorr)
+
     return {
         "mse_sr": mse_sr,
         "mse_baseline": mse_baseline,
@@ -240,6 +260,10 @@ def evaluate_super_resolution(
         "rmse_baseline": rmse_baseline,
         "uncertainty": uncertainty,
         "improvement_mse_pct": improvement_mse,
+        "crps": crps,
+        "peak_load_error": ple,
+        "sym_quantile_error_99": sqe,
+        "pearsonr_diff": pearsonr_diff,
     }
 
 
@@ -515,6 +539,10 @@ def main():
             "rmse_baseline",
             "uncertainty",
             "improvement_mse_pct",
+            "crps",
+            "peak_load_error",
+            "sym_quantile_error_99",
+            "pearsonr_diff",
         ]
     }
 
@@ -564,6 +592,11 @@ def main():
     print("-" * 60)
     print(f"Uncertainty: {avg_metrics['uncertainty']:.6f}")
     print(f"Improvement over baseline: {avg_metrics['improvement_mse_pct']:.1f}% (MSE)")
+    print("-" * 60)
+    print(f"CRPS:                 {avg_metrics['crps']:.6f}")
+    print(f"PeakLoadError:        {avg_metrics['peak_load_error']:.6f}")
+    print(f"SymQuantileErr_99:    {avg_metrics['sym_quantile_error_99']:.6f}")
+    print(f"PearsonR Diff:        {avg_metrics['pearsonr_diff']:.6f}")
     print("=" * 60)
     print(f"\nResults saved to {results_path}")
     print(f"Metrics saved to {json_path}")
