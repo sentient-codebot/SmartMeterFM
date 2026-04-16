@@ -328,8 +328,15 @@ class CombinedEmbedder(nn.Module):
             device=device,
         )
         for label_name in self.embedder_keys:
-            label_value = dict_labels[label_name]  # Always expect tensor, no None check
-            label_value = label_value.squeeze(-1)
+            label_value = dict_labels[label_name]
+            if label_value is None:
+                # Missing condition — use null token index (dropped by embedder)
+                null_val = getattr(self.dict_embedder[label_name], "num_embedding", 0)
+                label_value = torch.full(
+                    (batch_size,), null_val, device=device, dtype=torch.long
+                )
+            else:
+                label_value = label_value.squeeze(-1)
             extras = dict_extra.get(label_name, {})
             emb_label = self.dict_embedder[label_name](
                 label_value, **extras
@@ -426,8 +433,14 @@ class ContextEmbedder(nn.Module):
         list_embs = []
 
         for label_name in self.embedder_keys:
-            label_value = dict_labels[label_name]  # Always expect tensor, no None check
-            label_value = label_value.squeeze(-1)
+            label_value = dict_labels[label_name]
+            if label_value is None:
+                null_val = getattr(self.dict_embedder[label_name], "num_embedding", 0)
+                label_value = torch.full(
+                    (batch_size,), null_val, device=device, dtype=torch.long
+                )
+            else:
+                label_value = label_value.squeeze(-1)
             extras = dict_extra.get(label_name, {})
             emb_label = self.dict_embedder[label_name](
                 label_value, **extras

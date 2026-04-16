@@ -59,5 +59,6 @@ class LCLMonthYearEmbedder(CombinedEmbedder):
         # Apply year offset so raw calendar years become 0-indexed
         if dict_labels is not None and "year" in dict_labels:
             dict_labels = dict(dict_labels)  # shallow copy to avoid mutation
-            dict_labels["year"] = dict_labels["year"] - self.year_offset
+            if dict_labels["year"] is not None:
+                dict_labels["year"] = dict_labels["year"] - self.year_offset
         return super().forward(dict_labels, dict_extra, batch_size, device)

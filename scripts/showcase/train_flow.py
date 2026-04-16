@@ -33,6 +33,7 @@ import torch
 from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import DataLoader, TensorDataset
 
+from smartmeterfm.conditions import LCLCondition
 from smartmeterfm.data_modules.base import RESOLUTION_SECONDS
 from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
@@ -366,6 +367,11 @@ def setup_trainer(
 
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval="step")
 
+    # Use LCLCondition for LCL datasets so the sampling callback
+    # produces the correct condition keys (month + year, not season)
+    dataset_name = getattr(config.data, "dataset", "wpuq")
+    condition_cls = LCLCondition if dataset_name == "lcl_electricity" else None
+
     sampling_callback = PeriodicSamplingCallback(
         sample_every=config.train.save_and_sample_every,
         sample_config=config.train.val_sample_config,
@@ -374,6 +380,7 @@ def setup_trainer(
         log_wandb=config.log_wandb,
         log_mlflow=config.log_mlflow,
         profile_inverse_transform=profile_inverse_transform,
+        **({"condition_class": condition_cls} if condition_cls else {}),
     )
 
     callbacks = [checkpoint_callback, lr_monitor, sampling_callback]
