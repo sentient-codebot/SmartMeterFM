@@ -76,11 +76,13 @@ def load_generated_samples(samples_dir: str) -> dict[int, torch.Tensor]:
     return samples_by_month
 
 
-def load_test_data(config: ExperimentConfig) -> tuple[torch.Tensor, torch.Tensor]:
+def load_test_data(
+    config: ExperimentConfig,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Load test data using the data module.
 
     Returns:
-        Tuple of (test_profiles, test_month_labels)
+        Tuple of (test_profiles, test_month_labels, test_year_labels_or_None)
     """
     dataset_name = getattr(config.data, "dataset", "wpuq")
     logging.info(f"Loading test data from {dataset_name} data module...")
@@ -97,7 +99,8 @@ def load_test_data(config: ExperimentConfig) -> tuple[torch.Tensor, torch.Tensor
     logging.info(f"Test data shape: {test_profiles.shape}")
     logging.info(f"Test labels: {list(test_labels.dict_labels.keys())}")
 
-    return test_profiles, test_labels["month"]
+    year_labels = test_labels["year"] if "year" in test_labels else None
+    return test_profiles, test_labels["month"], year_labels
 
 
 def compute_metrics_per_month(
@@ -105,6 +108,8 @@ def compute_metrics_per_month(
     real_profiles: torch.Tensor,
     real_labels: torch.Tensor,
     device: str = "cpu",
+    real_year_labels: torch.Tensor | None = None,
+    year: int | None = None,
 ) -> dict[str, dict]:
     """Compute evaluation metrics per month and overall.
 
@@ -113,6 +118,8 @@ def compute_metrics_per_month(
         real_profiles: Real test profiles [N, seq_len, channels].
         real_labels: Month labels [N, 1].
         device: Device for computation.
+        real_year_labels: Year labels [N, 1] (optional).
+        year: If specified, filter real data to this year only.
 
     Returns:
         Dictionary of metric results.
@@ -136,6 +143,9 @@ def compute_metrics_per_month(
 
     # Flatten labels for comparison
     real_labels_flat = real_labels.squeeze(-1)  # [N]
+    real_year_flat = (
+        real_year_labels.squeeze(-1) if real_year_labels is not None else None
+    )
 
     # Per-month evaluation
     all_gen_samples = []
@@ -143,8 +153,10 @@ def compute_metrics_per_month(
 
     for month in sorted(generated.keys()):
         gen_samples = generated[month].to(device)
-        # Get real samples for this month
+        # Get real samples for this month (and year if specified)
         month_mask = real_labels_flat == month
+        if year is not None and real_year_flat is not None:
+            month_mask = month_mask & (real_year_flat == year)
         real_month = real_profiles[month_mask].to(device)
 
         if real_month.shape[0] == 0:
@@ -216,6 +228,13 @@ def main():
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device for metric computation (default: cuda if available)",
     )
+    parser.add_argument(
+        "--year",
+        type=int,
+        default=None,
+        help="Filter real test data to this year only (e.g. 2013). "
+        "Should match the year used during generation.",
+    )
     args = parser.parse_args()
 
     setup_logging()
@@ -236,12 +255,20 @@ def main():
         logging.info(f"  Month {month + 1}: {samples.shape}")
 
     # Load real test data
-    real_profiles, real_labels = load_test_data(config)
+    real_profiles, real_labels, real_year_labels = load_test_data(config)
+
+    if args.year is not None:
+        logging.info(f"Filtering real data to year {args.year}")
 
     # Compute metrics
     logging.info("Computing evaluation metrics...")
     results = compute_metrics_per_month(
-        generated, real_profiles, real_labels, device=args.device
+        generated,
+        real_profiles,
+        real_labels,
+        device=args.device,
+        real_year_labels=real_year_labels,
+        year=args.year,
     )
 
     # Save results

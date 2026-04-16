@@ -31,6 +31,7 @@ srun python scripts/showcase/generate_samples.py \
     --num_steps 100 \
     --batch_size 256 \
     --cfg_scale 1.0 \
+    --year 2013 \
     --output_dir $OUTDIR
 
 echo "**************** [${TIMEID}] sample generation completed. **************************"

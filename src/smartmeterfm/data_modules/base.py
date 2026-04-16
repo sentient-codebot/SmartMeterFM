@@ -12,7 +12,14 @@ from torch import Tensor
 
 from ..utils.configuration import DataConfig
 from .containers import DatasetWithMetadata, StaticLabelContainer
-from .transforms import ChronoVectorize, Compose, MeanStdScaler, MinMaxScaler, Patchify
+from .transforms import (
+    ChronoVectorize,
+    Compose,
+    ConstantScaler,
+    MeanStdScaler,
+    MinMaxScaler,
+    Patchify,
+)
 
 
 RANDOM_STATE = 0
@@ -53,6 +60,7 @@ class TimeSeriesDataCollection(DatasetCollection):
             "resolution": data_config.resolution,
             "normalize": data_config.normalize,
             "normalize_method": data_config.normalize_method,
+            "scaling_factor": data_config.scaling_factor,
             "pit_transform": data_config.pit,
             "shuffle": data_config.shuffle,
             "vectorize": data_config.vectorize,
@@ -170,6 +178,13 @@ class TimeSeriesDataCollection(DatasetCollection):
             scaler = MeanStdScaler()
             scaler.fit(data)
             self.scaling_factor = (scaler.mean_val, scaler.std_val)
+        elif method == "constant":
+            # Use config-provided scaling_factor if available, else auto from max
+            cfg_sf = self.process_option.get("scaling_factor", None)
+            scale_val = cfg_sf[0] if cfg_sf else None
+            scaler = ConstantScaler(scale_val=scale_val)
+            scaler.fit(data)
+            self.scaling_factor = (scaler.scale_val,)
         else:
             raise ValueError(f"Invalid normalize method: {method}")
         self._scaler = scaler

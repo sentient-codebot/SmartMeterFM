@@ -161,6 +161,30 @@ class MeanStdScaler(Transform):
         return f"MeanStdScaler(mean={self.mean_val}, std={self.std_val})"
 
 
+class ConstantScaler(Transform):
+    """Scale by a constant: ``data / scale_val``.  Preserves zero exactly.
+
+    If *scale_val* is ``None``, :meth:`fit` computes it as ``data.max()``.
+    """
+
+    def __init__(self, scale_val: float | None = None):
+        self.scale_val = scale_val
+
+    def fit(self, data: Tensor) -> "ConstantScaler":
+        if self.scale_val is None:
+            self.scale_val = data.max().item()
+        return self
+
+    def __call__(self, data: Tensor) -> Tensor:
+        return data / self.scale_val
+
+    def inverse(self, data: Tensor) -> Tensor:
+        return data * self.scale_val
+
+    def __repr__(self) -> str:
+        return f"ConstantScaler(scale_val={self.scale_val})"
+
+
 class Patchify(Transform):
     """Segment sequence into non-overlapping patches."""
 

@@ -228,12 +228,17 @@ def generate_vae_samples(
     return samples_by_month
 
 
-def save_samples(samples_by_month: dict[int, torch.Tensor], output_dir: str):
+def save_samples(
+    samples_by_month: dict[int, torch.Tensor],
+    output_dir: str,
+    year: int | None = None,
+):
     """Save generated samples to disk.
 
     Args:
         samples_by_month: Dictionary mapping month to samples tensor.
         output_dir: Directory to save samples.
+        year: Year used for generation (saved in metadata).
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -247,11 +252,28 @@ def save_samples(samples_by_month: dict[int, torch.Tensor], output_dir: str):
         month_path = os.path.join(output_dir, f"month_{month:02d}_samples.pt")
         torch.save(samples, month_path)
 
+    # Save generation metadata
+    import json
+
+    meta = {
+        "year": year,
+        "months": sorted(samples_by_month.keys()),
+        "num_samples_per_month": {
+            str(m): s.shape[0] for m, s in samples_by_month.items()
+        },
+    }
+    meta_path = os.path.join(output_dir, "generation_meta.json")
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    print(f"Saved generation metadata to {meta_path}")
+
     # Save summary
     summary_path = os.path.join(output_dir, "generation_summary.txt")
     with open(summary_path, "w") as f:
         f.write("Generation Summary\n")
         f.write("=" * 40 + "\n\n")
+        if year is not None:
+            f.write(f"Year: {year}\n\n")
         total_samples = 0
         for month, samples in sorted(samples_by_month.items()):
             f.write(
@@ -367,7 +389,7 @@ def main():
         )
 
     # Save samples
-    save_samples(samples_by_month, args.output_dir)
+    save_samples(samples_by_month, args.output_dir, year=args.year)
 
     print("\nGeneration complete!")
 

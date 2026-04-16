@@ -32,6 +32,7 @@ srun python scripts/showcase/generate_samples.py \
     --num_steps 100 \
     --batch_size 256 \
     --cfg_scale 1.0 \
+    --year 2013 \
     --output_dir $OUTDIR
 
 echo "**************** [${TIMEID}] Feb sample generation completed. **************************"
@@ -40,7 +41,8 @@ echo "**************** [${TIMEID}] Feb sample generation completed. ************
 srun python scripts/showcase/evaluate_samples.py \
     --samples_dir $OUTDIR \
     --config $CONFIG \
-    --output_dir $EVALDIR
+    --output_dir $EVALDIR \
+    --year 2013
 
 echo "**************** [${TIMEID}] Feb evaluation completed. **************************"
 
@@ -49,6 +51,7 @@ srun python scripts/showcase/plot_generated_samples.py \
     --samples_dir $OUTDIR \
     --config $CONFIG \
     --output_dir $FIGDIR \
-    --eval_metrics $EVALDIR/eval_metrics.json
+    --eval_metrics $EVALDIR/eval_metrics.json \
+    --year 2013
 
 echo "**************** [${TIMEID}] Feb plotting completed. **************************"

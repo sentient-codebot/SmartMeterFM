@@ -133,6 +133,38 @@ def get_embedder_args(dim_base: int, num_months: int = 12) -> dict:
     }
 
 
+def get_lcl_embedder_args(
+    dim_base: int,
+    num_months: int = 12,
+    num_years: int = 2,
+    year_offset: int = 2012,
+) -> dict:
+    """Get embedder arguments for LCL month + year conditioning.
+
+    Args:
+        dim_base: Base dimension for embeddings.
+        num_months: Number of month categories (default: 12).
+        num_years: Number of year categories (default: 2 for 2012-2013).
+        year_offset: Subtracted from raw year before embedding (default: 2012).
+
+    Returns:
+        Dictionary of embedder arguments.
+    """
+    return {
+        "month": IntegerEmbedderArgs(
+            num_embedding=num_months,
+            dim_embedding=dim_base,
+            dropout=0.1,
+        ).to_dict(),
+        "year": IntegerEmbedderArgs(
+            num_embedding=num_years,
+            dim_embedding=dim_base,
+            dropout=0.1,
+        ).to_dict(),
+        "year_offset": year_offset,
+    }
+
+
 def calculate_batch_sizes(args, config, num_gpus):
     """Calculate batch sizes and gradient accumulation for multi-GPU training."""
     global_batch_size = config.train.batch_size
@@ -264,8 +296,14 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
     config.model.seq_length = sample_shape[0]
     config.model.num_in_channel = sample_shape[1]
 
-    # Get embedder arguments
-    emb_args = get_embedder_args(config.model.dim_base)
+    # Get embedder arguments — LCL uses month+year, others use month only
+    dataset_name = getattr(config.data, "dataset", "wpuq")
+    if dataset_name == "lcl_electricity":
+        emb_args = get_lcl_embedder_args(config.model.dim_base)
+        label_embedder_name = "lcl_month_year"
+    else:
+        emb_args = get_embedder_args(config.model.dim_base)
+        label_embedder_name = "wpuq_month"
 
     # Set up metrics
     make_metrics = setup_metrics()
@@ -284,7 +322,7 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
         train_config=config.train,
         sample_config=config.sample,
         num_in_channel=sample_shape[1],
-        label_embedder_name="wpuq_month",
+        label_embedder_name=label_embedder_name,
         label_embedder_args=emb_args,
         context_embedder_name=None,  # No context for basic conditional generation
         context_embedder_args=None,

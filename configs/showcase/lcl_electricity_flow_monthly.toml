@@ -15,7 +15,7 @@ dataset = "lcl_electricity"
 root = "data/lcl_electricity/"
 load = true
 normalize = true
-normalize_method = "meanstd"
+normalize_method = "constant"  # ConstantScaler: data / max, preserves 0→0
 pit = false
 resolution = "30min"  # LCL native resolution (no upsampling supported)
 segment_type = "monthly"
@@ -23,7 +23,7 @@ shuffle = true
 vectorize = true
 style_vectorize = "patchify"
 vectorize_window_size = 16
-target_labels = ["month"]
+target_labels = ["month", "year"]
 train_season = "whole_year"
 val_season = "whole_year"
 

@@ -75,7 +75,8 @@ def load_test_data(config: ExperimentConfig):
         data_collection = WPuQ(config.data)
     test_profiles = data_collection.dataset.profile["test"]
     test_labels = data_collection.dataset.label["test"]
-    return test_profiles, test_labels["month"]
+    year_labels = test_labels["year"] if "year" in test_labels else None
+    return test_profiles, test_labels["month"], year_labels
 
 
 def plot_per_month_comparison(
@@ -83,15 +84,22 @@ def plot_per_month_comparison(
     real_profiles: torch.Tensor,
     real_labels: torch.Tensor,
     output_dir: str,
+    real_year_labels: torch.Tensor | None = None,
+    year: int | None = None,
 ):
     """Plot generated vs real comparison for each month."""
     real_labels_flat = real_labels.squeeze(-1)
+    real_year_flat = (
+        real_year_labels.squeeze(-1) if real_year_labels is not None else None
+    )
     months_dir = os.path.join(output_dir, "per_month")
     os.makedirs(months_dir, exist_ok=True)
 
     for month in sorted(generated.keys()):
         gen_samples = generated[month]
         month_mask = real_labels_flat == month
+        if year is not None and real_year_flat is not None:
+            month_mask = month_mask & (real_year_flat == year)
         real_month = real_profiles[month_mask]
 
         if real_month.shape[0] == 0:
@@ -118,9 +126,14 @@ def plot_mean_std_comparison(
     real_profiles: torch.Tensor,
     real_labels: torch.Tensor,
     output_dir: str,
+    real_year_labels: torch.Tensor | None = None,
+    year: int | None = None,
 ):
     """Plot mean and std profiles for generated vs real, per month (3x4 grid)."""
     real_labels_flat = real_labels.squeeze(-1)
+    real_year_flat = (
+        real_year_labels.squeeze(-1) if real_year_labels is not None else None
+    )
 
     with plt.style.context("smartmeterfm.utils.article_compatible"):
         fig, axes = plt.subplots(4, 3, figsize=(18, 16))
@@ -140,6 +153,8 @@ def plot_mean_std_comparison(
                 continue
 
             month_mask = real_labels_flat == month
+            if year is not None and real_year_flat is not None:
+                month_mask = month_mask & (real_year_flat == year)
             real_month = real_profiles[month_mask]
             if real_month.dim() == 3:
                 real_month = rearrange(real_month, "b s c -> b (s c)")
@@ -281,6 +296,13 @@ def main():
         default=None,
         help="Path to eval_metrics.json (optional, for metrics bar chart)",
     )
+    parser.add_argument(
+        "--year",
+        type=int,
+        default=None,
+        help="Filter real test data to this year only (e.g. 2013). "
+        "Should match the year used during generation.",
+    )
     args = parser.parse_args()
 
     setup_logging()
@@ -291,15 +313,32 @@ def main():
         logging.error("No generated samples found.")
         return
 
-    real_profiles, real_labels = load_test_data(config)
+    real_profiles, real_labels, real_year_labels = load_test_data(config)
+
+    if args.year is not None:
+        logging.info(f"Filtering real data to year {args.year}")
 
     # 1. Per-month overlap comparison
     logging.info("Plotting per-month comparisons...")
-    plot_per_month_comparison(generated, real_profiles, real_labels, args.output_dir)
+    plot_per_month_comparison(
+        generated,
+        real_profiles,
+        real_labels,
+        args.output_dir,
+        real_year_labels=real_year_labels,
+        year=args.year,
+    )
 
     # 2. Mean ± std comparison grid
     logging.info("Plotting mean/std comparison...")
-    plot_mean_std_comparison(generated, real_profiles, real_labels, args.output_dir)
+    plot_mean_std_comparison(
+        generated,
+        real_profiles,
+        real_labels,
+        args.output_dir,
+        real_year_labels=real_year_labels,
+        year=args.year,
+    )
 
     # 3. Metrics summary bar chart
     eval_path = args.eval_metrics or os.path.join(
