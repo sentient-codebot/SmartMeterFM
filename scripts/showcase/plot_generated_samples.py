@@ -79,6 +79,21 @@ def load_test_data(config: ExperimentConfig):
     return test_profiles, test_labels["month"], year_labels
 
 
+def _compute_ylim(
+    generated: dict[int, torch.Tensor],
+    real_profiles: torch.Tensor,
+    margin: float = 0.1,
+) -> tuple[float, float]:
+    """Compute global y-axis limits from generated and real data."""
+    all_vals = [real_profiles]
+    for g in generated.values():
+        all_vals.append(g)
+    cat = torch.cat([v.reshape(-1) for v in all_vals])
+    lo, hi = cat.min().item(), cat.max().item()
+    pad = (hi - lo) * margin
+    return lo - pad, hi + pad
+
+
 def plot_per_month_comparison(
     generated: dict[int, torch.Tensor],
     real_profiles: torch.Tensor,
@@ -94,6 +109,8 @@ def plot_per_month_comparison(
     )
     months_dir = os.path.join(output_dir, "per_month")
     os.makedirs(months_dir, exist_ok=True)
+
+    ymin, ymax = _compute_ylim(generated, real_profiles)
 
     for month in sorted(generated.keys()):
         gen_samples = generated[month]
@@ -112,8 +129,8 @@ def plot_per_month_comparison(
             real=real_month,
             output_path=output_path,
             title=f"{MONTH_NAMES[month]} — Generated vs Real",
-            ymin=-4,
-            ymax=6,
+            ymin=ymin,
+            ymax=ymax,
         )
         logging.info(
             f"Month {month + 1}: {gen_samples.shape[0]} gen, "
@@ -139,18 +156,20 @@ def plot_mean_std_comparison(
         fig, axes = plt.subplots(4, 3, figsize=(18, 16))
         axes = axes.flatten()
 
-        for month in range(12):
-            ax = axes[month]
+        # First pass: compute mean/std per month, track global range
+        month_stats: dict[int, tuple] = {}
+        global_lo = float("inf")
+        global_hi = float("-inf")
 
-            # Flatten patchified data to 1D time series
-            if month in generated:
-                gen = generated[month]
-                if gen.dim() == 3:
-                    gen = rearrange(gen, "b s c -> b (s c)")
-                gen_mean = gen.mean(dim=0).numpy()
-                gen_std = gen.std(dim=0).numpy()
-            else:
+        for month in range(12):
+            if month not in generated:
                 continue
+
+            gen = generated[month]
+            if gen.dim() == 3:
+                gen = rearrange(gen, "b s c -> b (s c)")
+            gen_mean = gen.mean(dim=0).numpy()
+            gen_std = gen.std(dim=0).numpy()
 
             month_mask = real_labels_flat == month
             if year is not None and real_year_flat is not None:
@@ -161,6 +180,24 @@ def plot_mean_std_comparison(
             real_mean = real_month.mean(dim=0).numpy()
             real_std = real_month.std(dim=0).numpy()
 
+            month_stats[month] = (gen_mean, gen_std, real_mean, real_std)
+
+            lo = min((gen_mean - gen_std).min(), (real_mean - real_std).min())
+            hi = max((gen_mean + gen_std).max(), (real_mean + real_std).max())
+            global_lo = min(global_lo, lo)
+            global_hi = max(global_hi, hi)
+
+        pad = (global_hi - global_lo) * 0.1
+        ymin = global_lo - pad
+        ymax = global_hi + pad
+
+        # Second pass: plot
+        for month in range(12):
+            ax = axes[month]
+            if month not in month_stats:
+                continue
+
+            gen_mean, gen_std, real_mean, real_std = month_stats[month]
             t = np.arange(len(gen_mean))
 
             ax.plot(t, gen_mean, color="tab:orange", label="Generated", linewidth=1.2)
@@ -182,7 +219,7 @@ def plot_mean_std_comparison(
 
             ax.set_title(MONTH_NAMES[month])
             ax.set_xlim(0, len(t) - 1)
-            ax.set_ylim(-3, 5)
+            ax.set_ylim(ymin, ymax)
             ax.grid(True, alpha=0.3)
 
             if month == 0:
