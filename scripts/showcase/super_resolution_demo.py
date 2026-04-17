@@ -2,7 +2,9 @@
 Demonstrate super-resolution using Flow Matching model on WPuQ Heat Pump data.
 
 This showcase script demonstrates how to use a trained Flow Matching model
-for time series super-resolution (upsampling from low to high resolution).
+for time series super-resolution (upsampling from low to high resolution) via
+``SmartMeterFMModel.super_resolve``, which wraps the model with a
+``PosteriorVelocityModelWrapper`` in PROJECT mode + ``SuperResolutionOperator``.
 
 Usage:
     uv run python scripts/showcase/super_resolution_demo.py --checkpoint path/to/checkpoint.ckpt --scale_factor 4
@@ -31,16 +33,17 @@ from einops import rearrange
 from tqdm import tqdm
 
 from smartmeterfm.conditions import LCLCondition, WPuQCondition
+from smartmeterfm.data_modules.heat_pump import WPuQ
+from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
+from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
+from smartmeterfm.interfaces.smartmeter import SmartMeterFMModel
+from smartmeterfm.utils.configuration import DataConfig
 from smartmeterfm.utils.eval import (
     calculate_pearsonr_per_sample,
     crps_empirical_dimwise,
     peak_load_error,
     sym_quantile_error,
 )
-from smartmeterfm.data_modules.heat_pump import WPuQ
-from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
-from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
-from smartmeterfm.utils.configuration import DataConfig
 
 
 _CONDITION_CLASS = {
@@ -111,92 +114,6 @@ def upsample_linear(data: torch.Tensor, scale_factor: int) -> torch.Tensor:
         data_hr = data_hr.squeeze(0)
 
     return data_hr
-
-
-def super_resolve_with_flow(
-    model,
-    low_res_real: torch.Tensor,
-    scale_factor: int,
-    condition: dict,
-    target_seq_len: int,
-    patch_size: int,
-    num_samples: int = 10,
-    num_steps: int = 100,
-    device: str = "cuda",
-) -> torch.Tensor:
-    """Perform super-resolution using Flow Matching with posterior sampling.
-
-    The model operates in patchified space [B, patch_size, num_patches], but
-    the SR projection (downsampling constraint) is applied in the actual
-    temporal domain [B, 1, seq_length].
-
-    Args:
-        model: Trained FlowModelPL model.
-        low_res_real: Low-resolution time series in real space [lr_seq_len].
-        scale_factor: Upsampling factor.
-        condition: Conditioning information.
-        target_seq_len: Original high-resolution sequence length (real space).
-        patch_size: Patch size used for vectorization.
-        num_samples: Number of SR samples to generate.
-        num_steps: Number of ODE integration steps.
-        device: Device to use.
-
-    Returns:
-        Super-resolved samples in real space [num_samples, target_seq_len].
-    """
-    model.eval()
-    model.to(device)
-
-    # Model expects [B, num_patches, patch_size] (stored as [N, L, C])
-    num_patches = target_seq_len // patch_size
-    patch_shape = (1, num_patches, patch_size)
-
-    low_res_expanded = low_res_real.unsqueeze(0).to(device)  # [1, lr_seq_len]
-
-    all_sr = []
-
-    for _ in tqdm(range(num_samples), desc="Generating SR samples"):
-        with torch.no_grad():
-            # Sample from prior in patchified space
-            x_t = torch.randn(*patch_shape, device=device)
-            dt = 1.0 / num_steps
-
-            for step in range(num_steps):
-                t = torch.full((1,), step * dt, device=device)
-
-                # Get velocity prediction (model operates in patch space)
-                velocity = model.model(x_t, t, y=condition)
-                x_t = x_t + velocity * dt
-
-                # Project in real temporal space
-                # Unpatchify: [B, C, L] -> [B, L*C]
-                x_t_real = rearrange(x_t, "b l c -> b (l c)")
-
-                # Downsample in real space and compare to low-res input
-                x_t_real_3d = x_t_real.unsqueeze(1)  # [B, 1, seq_len]
-                x_t_down = F.avg_pool1d(
-                    x_t_real_3d, kernel_size=scale_factor, stride=scale_factor
-                ).squeeze(1)  # [B, lr_seq_len]
-
-                # Compute correction in real space
-                error = low_res_expanded - x_t_down  # [B, lr_seq_len]
-                error_3d = error.unsqueeze(1)  # [B, 1, lr_seq_len]
-                correction = F.interpolate(
-                    error_3d, size=target_seq_len, mode="nearest"
-                ).squeeze(1)  # [B, seq_len]
-
-                # Apply correction with decreasing strength
-                correction_strength = max(0, 1 - step / num_steps)
-                x_t_real = x_t_real + correction_strength * correction
-
-                # Re-patchify: [B, seq_len] -> [B, C, L]
-                x_t = rearrange(x_t_real, "b (l c) -> b l c", c=patch_size)
-
-            # Store result in real space
-            x_t_real = rearrange(x_t, "b l c -> b (l c)")
-            all_sr.append(x_t_real.cpu())
-
-    return torch.cat(all_sr, dim=0)
 
 
 def evaluate_super_resolution(
@@ -382,6 +299,12 @@ def main():
         help="Number of ODE integration steps (default: 100)",
     )
     parser.add_argument(
+        "--cfg_scale",
+        type=float,
+        default=1.0,
+        help="Classifier-free guidance scale (default: 1.0)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -412,13 +335,9 @@ def main():
     print(f"Scale factor: {args.scale_factor}x")
     print(f"Number of samples per series: {args.num_samples}")
 
-    # Load model
+    # Load model via the unified interface
     print(f"\nLoading model from {args.checkpoint}...")
-    from smartmeterfm.models.flow import FlowModelPL
-
-    model = FlowModelPL.load_from_checkpoint(
-        args.checkpoint, map_location=args.device, weights_only=False
-    )
+    model = SmartMeterFMModel.from_checkpoint(args.checkpoint, device=args.device)
 
     # Load test data
     dataset_name = args.dataset
@@ -454,7 +373,6 @@ def main():
 
     test_profiles = data_collection.dataset.profile["test"][: args.num_test_series]
     test_labels = data_collection.dataset.label["test"]
-    patch_size = data_config.vectorize_window_size
 
     # Run super-resolution
     all_metrics = []
@@ -467,11 +385,11 @@ def main():
     example_indices = set(range(min(args.num_example_figures, len(test_profiles))))
 
     for idx in tqdm(range(len(test_profiles)), desc="Super-resolving"):
-        original_patched = test_profiles[idx]  # [patch_size, num_patches] (patchified)
+        original_patched = test_profiles[idx]  # [num_patches, patch_size]
         month = test_labels["month"][idx].item()
 
-        # Unpatchify to real temporal space: [C, L] -> [C*L]
-        original_real = rearrange(original_patched, "l c -> (l c)")  # [seq_length]
+        # Unpatchify to real temporal space
+        original_real = rearrange(original_patched, "l c -> (l c)")
         seq_length = original_real.shape[0]
 
         # Downsample in real temporal space
@@ -484,27 +402,23 @@ def main():
         # Baseline: linear interpolation in real space
         baseline_real = F.interpolate(
             lr_real.view(1, 1, -1), size=seq_length, mode="linear", align_corners=False
-        ).squeeze()  # [seq_length]
+        ).squeeze()
 
-        # Build condition via the typed condition class; calendar fields
-        # (first_day_of_week, month_length) are auto-derived when year is set.
+        # Build condition via the typed condition class
         CondClass = _CONDITION_CLASS[args.dataset]
         year = test_labels["year"][idx].item() if "year" in test_labels else None
         cond = CondClass(month=month, year=year)
         condition = cond.to_tensor_dict(batch_size=1, device=args.device)
 
-        # Super-resolve (model in patch space, projection in real space)
-        sr_samples_real = super_resolve_with_flow(
-            model,
-            lr_real,
-            args.scale_factor,
-            condition,
-            target_seq_len=seq_length,
-            patch_size=patch_size,
+        # Super-resolve via the unified interface
+        sr_samples_real = model.super_resolve(
+            low_res_real=lr_real,
+            scale_factor=args.scale_factor,
+            condition=condition,
             num_samples=args.num_samples,
-            num_steps=args.num_steps,
-            device=args.device,
-        )
+            num_step=args.num_steps,
+            cfg_scale=args.cfg_scale,
+        ).cpu()
 
         # Evaluate in real temporal space
         metrics = evaluate_super_resolution(

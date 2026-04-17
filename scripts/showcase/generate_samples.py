@@ -25,6 +25,7 @@ import torch
 from tqdm import tqdm
 
 from smartmeterfm.conditions import LCLCondition, WPuQCondition
+from smartmeterfm.interfaces.smartmeter import SmartMeterFMModel
 
 
 _CONDITION_CLASS = {
@@ -60,87 +61,33 @@ def generate_flow_samples(
     Returns:
         Dictionary mapping month index to generated samples tensor.
     """
-    from smartmeterfm.models.flow import FlowModelPL
-
     print(f"Loading Flow model from {checkpoint_path}...")
-    model = FlowModelPL.load_from_checkpoint(
-        checkpoint_path, map_location=device, weights_only=False
-    )
-    model.eval()
-    model.to(device)
+    model = SmartMeterFMModel.from_checkpoint(checkpoint_path, device=device)
 
-    # Use EMA weights if available
-    if hasattr(model, "ema") and model.ema is not None:
-        model.ema.copy_params_from_ema_to_model()
-        print("Using EMA weights for generation")
-
-    samples_by_month = {}
+    CondClass = _CONDITION_CLASS[dataset]
+    samples_by_month: dict[int, torch.Tensor] = {}
 
     for month in months:
         print(f"\nGenerating samples for month {month + 1}/12...")
         all_samples = []
 
-        # Calculate batch sizes
         num_batches = (num_samples + batch_size - 1) // batch_size
         remaining = num_samples
 
-        for batch_idx in tqdm(range(num_batches), desc=f"Month {month + 1}"):
+        for _ in tqdm(range(num_batches), desc=f"Month {month + 1}"):
             curr_batch_size = min(batch_size, remaining)
             remaining -= curr_batch_size
 
-            # Create condition tensor — calendar fields (first_day_of_week,
-            # month_length) are auto-derived by the condition class when
-            # both year and month are provided.
-            CondClass = _CONDITION_CLASS[dataset]
             cond = CondClass(month=month, year=year)
-            condition = cond.to_tensor_dict(batch_size=curr_batch_size, device=device)
+            condition = cond.to_tensor_dict(batch_size=1, device=device)
 
-            # Generate samples
-            with torch.no_grad():
-                # Get sample shape from model
-                # seq_length is stored inside model_config (TransformerConfig)
-                seq_len = model.hparams["model_config"].seq_length
-                num_ch = model.hparams["num_in_channel"]
-                sample_shape = (curr_batch_size, seq_len, num_ch)
-
-                # Sample from prior
-                x_0 = torch.randn(sample_shape, device=device)
-
-                # Zero out padded positions in x_0
-                valid_length = None
-                if model.create_mask and "month_length" in condition:
-                    from smartmeterfm.models.flow import FlowModelPL
-
-                    valid_length = FlowModelPL._convert_offset_month_length(
-                        condition["month_length"], 28, model.steps_per_day
-                    ).squeeze(1)
-                    x_0 = FlowModelPL._zero_padding(x_0, valid_length)
-
-                # Use the model's sample method if available
-                if hasattr(model, "sample"):
-                    x_1 = model.sample(
-                        x_0=x_0,
-                        condition=condition,
-                        num_steps=num_steps,
-                        cfg_scale=cfg_scale,
-                    )
-                else:
-                    # Manual ODE integration using Euler method
-                    x_t = x_0
-                    dt = 1.0 / num_steps
-                    for step in range(num_steps):
-                        t = torch.full((curr_batch_size,), step * dt, device=device)
-                        velocity = model.model(
-                            x_t, t, y=condition, valid_length=valid_length
-                        )
-                        x_t = x_t + velocity * dt
-                    x_1 = x_t
-
-                # Zero out padded positions in output as safeguard
-                if valid_length is not None:
-                    x_1 = FlowModelPL._zero_padding(x_1, valid_length)
-
-                all_samples.append(x_1.cpu())
+            x_1 = model.generate(
+                condition=condition,
+                batch_size=curr_batch_size,
+                cfg_scale=cfg_scale,
+                num_step=num_steps,
+            )
+            all_samples.append(x_1.cpu())
 
         samples_by_month[month] = torch.cat(all_samples, dim=0)
         print(
@@ -191,7 +138,7 @@ def generate_vae_samples(
         num_batches = (num_samples + batch_size - 1) // batch_size
         remaining = num_samples
 
-        for batch_idx in tqdm(range(num_batches), desc=f"Month {month + 1}"):
+        for _ in tqdm(range(num_batches), desc=f"Month {month + 1}"):
             curr_batch_size = min(batch_size, remaining)
             remaining -= curr_batch_size
 

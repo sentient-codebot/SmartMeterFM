@@ -2,7 +2,9 @@
 Demonstrate imputation using Flow Matching model on WPuQ Heat Pump data.
 
 This showcase script demonstrates how to use a trained Flow Matching model
-for time series imputation (filling in missing values) using posterior sampling.
+for time series imputation (filling in missing values) using the shared
+``SmartMeterFMModel.impute`` interface, which wraps the model with a
+``PosteriorVelocityModelWrapper`` in PROJECT mode.
 
 The script supports different missing data patterns:
 - MCAR (Missing Completely At Random): Random positions are missing
@@ -33,16 +35,17 @@ from einops import rearrange
 from tqdm import tqdm
 
 from smartmeterfm.conditions import LCLCondition, WPuQCondition
+from smartmeterfm.data_modules.heat_pump import WPuQ
+from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
+from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
+from smartmeterfm.interfaces.smartmeter import SmartMeterFMModel
+from smartmeterfm.utils.configuration import DataConfig
 from smartmeterfm.utils.eval import (
     calculate_pearsonr_per_sample,
     crps_empirical_dimwise,
     peak_load_error,
     sym_quantile_error,
 )
-from smartmeterfm.data_modules.heat_pump import WPuQ
-from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
-from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
-from smartmeterfm.utils.configuration import DataConfig
 from smartmeterfm.utils.plot import plot_time_series_comparison_advanced
 
 
@@ -118,75 +121,6 @@ def generate_mnar_consecutive_mask(
         attempts += 1
 
     return mask
-
-
-def impute_with_flow(
-    model,
-    observed_data: torch.Tensor,
-    mask: torch.Tensor,
-    condition: dict,
-    patch_size: int,
-    num_samples: int = 10,
-    num_steps: int = 100,
-    device: str = "cuda",
-) -> torch.Tensor:
-    """Perform imputation using Flow Matching with posterior sampling.
-
-    The model operates in patchified space [B, seq_patches, patch_size], but
-    the projection (keeping observed values fixed) is applied in the actual
-    temporal domain [B, 1, seq_length] to ensure per-timestep masking.
-
-    Args:
-        model: Trained FlowModelPL model.
-        observed_data: The observed time series in real space [seq_length].
-        mask: Binary mask in real space [seq_length] (1 = observed, 0 = missing).
-        condition: Conditioning information (e.g., month).
-        patch_size: Patch size used for vectorization.
-        num_samples: Number of imputation samples to generate.
-        num_steps: Number of ODE integration steps.
-        device: Device to use.
-
-    Returns:
-        Imputed samples in real space [num_samples, seq_length].
-    """
-    model.eval()
-    model.to(device)
-
-    seq_length = observed_data.shape[0]
-    num_patches = seq_length // patch_size
-    # Model expects [B, num_patches, patch_size] (stored as [N, L, C])
-    patch_shape = (1, num_patches, patch_size)
-
-    observed_real = observed_data.unsqueeze(0).to(device)  # [1, seq_length]
-    mask_real = mask.unsqueeze(0).to(device)  # [1, seq_length]
-
-    all_imputed = []
-
-    for _ in tqdm(range(num_samples), desc="Generating imputations"):
-        with torch.no_grad():
-            # Sample from prior in patchified space
-            x_t = torch.randn(*patch_shape, device=device)
-            dt = 1.0 / num_steps
-
-            for step in range(num_steps):
-                t = torch.full((1,), step * dt, device=device)
-
-                # Get velocity prediction (model operates in patch space)
-                velocity = model.model(x_t, t, y=condition)
-                x_t = x_t + velocity * dt
-
-                # Project in real temporal space: keep observed values fixed
-                # Unpatchify: [B, L, C] -> [B, L*C]
-                x_t_real = rearrange(x_t, "b l c -> b (l c)")
-                x_t_real = x_t_real * (1 - mask_real) + observed_real * mask_real
-                # Re-patchify: [B, L*C] -> [B, L, C]
-                x_t = rearrange(x_t_real, "b (l c) -> b l c", c=patch_size)
-
-            # Store result in real space
-            x_t_real = rearrange(x_t, "b l c -> b (l c)")
-            all_imputed.append(x_t_real.cpu())
-
-    return torch.cat(all_imputed, dim=0)
 
 
 def evaluate_imputation(
@@ -315,6 +249,12 @@ def main():
         help="Number of ODE integration steps (default: 100)",
     )
     parser.add_argument(
+        "--cfg_scale",
+        type=float,
+        default=1.0,
+        help="Classifier-free guidance scale (default: 1.0)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -346,13 +286,9 @@ def main():
     print(f"Missing rate: {args.missing_rate}")
     print(f"Number of samples per series: {args.num_samples}")
 
-    # Load model
+    # Load model via the unified interface
     print(f"\nLoading model from {args.checkpoint}...")
-    from smartmeterfm.models.flow import FlowModelPL
-
-    model = FlowModelPL.load_from_checkpoint(
-        args.checkpoint, map_location=args.device, weights_only=False
-    )
+    model = SmartMeterFMModel.from_checkpoint(args.checkpoint, device=args.device)
 
     # Load test data
     dataset_name = args.dataset
@@ -388,7 +324,6 @@ def main():
 
     test_profiles = data_collection.dataset.profile["test"][: args.num_test_series]
     test_labels = data_collection.dataset.label["test"]
-    patch_size = data_config.vectorize_window_size
 
     # Run imputation
     all_metrics = []
@@ -399,11 +334,11 @@ def main():
     example_indices = set(range(min(args.num_example_figures, len(test_profiles))))
 
     for idx in tqdm(range(len(test_profiles)), desc="Imputing"):
-        original_patched = test_profiles[idx]  # [patch_size, num_patches] (patchified)
+        original_patched = test_profiles[idx]  # [num_patches, patch_size]
         month = test_labels["month"][idx].item()
 
-        # Unpatchify to real temporal space: [C, L] -> [C*L]
-        original_real = rearrange(original_patched, "l c -> (l c)")  # [seq_length]
+        # Unpatchify to real temporal space
+        original_real = rearrange(original_patched, "l c -> (l c)")
         seq_length = original_real.shape[0]
 
         # Generate mask in real temporal space
@@ -419,10 +354,6 @@ def main():
                 seed=args.seed + idx,
             )
 
-        # Create observed data in real space (with missing values set to 0)
-        observed_real = original_real.clone()
-        observed_real = observed_real * mask
-
         # Build condition via the typed condition class; calendar fields
         # (first_day_of_week, month_length) are auto-derived when year is set.
         CondClass = _CONDITION_CLASS[args.dataset]
@@ -430,17 +361,16 @@ def main():
         cond = CondClass(month=month, year=year)
         condition = cond.to_tensor_dict(batch_size=1, device=args.device)
 
-        # Impute (operates in patch space internally, projects in real space)
-        imputed_real = impute_with_flow(
-            model,
-            observed_real,
-            mask,
-            condition,
-            patch_size=patch_size,
+        # Impute via the unified interface (uses PosteriorVelocityModelWrapper
+        # in PROJECT mode + InpaintingOperator internally).
+        imputed_real = model.impute(
+            observed_real=original_real,
+            mask_real=mask,
+            condition=condition,
             num_samples=args.num_samples,
-            num_steps=args.num_steps,
-            device=args.device,
-        )
+            num_step=args.num_steps,
+            cfg_scale=args.cfg_scale,
+        ).cpu()
 
         # Evaluate in real temporal space
         metrics = evaluate_imputation(original_real, imputed_real, mask)
