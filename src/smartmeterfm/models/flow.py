@@ -143,7 +143,7 @@ class PosteriorVelocityModelWrapper(ModelWrapper):
         num_sampling: int = 1,
         project: bool = False,
         clamp_t: bool = True,
-        method: PosteriorMethod = PosteriorMethod.DPS,
+        method: PosteriorMethod = PosteriorMethod.PROJECT,
     ):
         training_scheduler = path.scheduler
         if not isinstance(training_scheduler, VPScheduler):
