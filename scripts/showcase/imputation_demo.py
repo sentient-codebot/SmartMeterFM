@@ -297,13 +297,20 @@ def main():
         "wpuq_household": "15min",
         "lcl_electricity": "30min",
     }
+    # Must match the training config for each dataset, otherwise the loaded
+    # test profiles are on a different scale than the model was trained on.
+    normalize_method_map = {
+        "wpuq": "meanstd",
+        "wpuq_household": "meanstd",
+        "lcl_electricity": "constant",
+    }
     print(f"\nLoading {dataset_name} test data...")
     data_config = DataConfig(
         dataset=dataset_name,
         root=args.data_root,
         load=True,
         normalize=True,
-        normalize_method="meanstd",
+        normalize_method=normalize_method_map[dataset_name],
         pit=False,
         resolution=resolution_map[dataset_name],
         shuffle=False,
@@ -393,6 +400,8 @@ def main():
                 ),
                 mask=mask,
                 overlap_generated_label="Imputed Samples",
+                ymin=-0.5,
+                ymax=0.5,
             )
             plt.close(fig)
 

@@ -190,6 +190,8 @@ def plot_sr_example(
     baseline_real: torch.Tensor,
     output_path: str,
     title: str = "Super-Resolution Example",
+    ymin: float = -0.5,
+    ymax: float = 0.5,
 ):
     """Plot a single super-resolution example with original, SR, and baseline.
 
@@ -241,6 +243,7 @@ def plot_sr_example(
         ax.set_xlabel("Time Step [-]")
         ax.set_ylabel("Normalized Power [-]")
         ax.set_xlim(0, len(t) - 1)
+        ax.set_ylim(ymin, ymax)
         ax.set_title(title)
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -346,13 +349,20 @@ def main():
         "wpuq_household": "15min",
         "lcl_electricity": "30min",
     }
+    # Must match the training config for each dataset, otherwise the loaded
+    # test profiles are on a different scale than the model was trained on.
+    normalize_method_map = {
+        "wpuq": "meanstd",
+        "wpuq_household": "meanstd",
+        "lcl_electricity": "constant",
+    }
     print(f"\nLoading {dataset_name} test data...")
     data_config = DataConfig(
         dataset=dataset_name,
         root=args.data_root,
         load=True,
         normalize=True,
-        normalize_method="meanstd",
+        normalize_method=normalize_method_map[dataset_name],
         pit=False,
         resolution=resolution_map[dataset_name],
         shuffle=False,
