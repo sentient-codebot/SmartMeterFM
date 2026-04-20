@@ -42,6 +42,7 @@ from smartmeterfm.utils.callbacks import PeriodicSamplingCallback
 from smartmeterfm.utils.configuration import (
     ExperimentConfig,
     IntegerEmbedderArgs,
+    PositionEmbedderArgs,
     save_config,
 )
 from smartmeterfm.utils.eval import (
@@ -137,16 +138,20 @@ def get_embedder_args(dim_base: int, num_months: int = 12) -> dict:
 def get_lcl_embedder_args(
     dim_base: int,
     num_months: int = 12,
-    num_years: int = 2,
     year_offset: int = 2012,
 ) -> dict:
-    """Get embedder arguments for LCL month + year conditioning.
+    """Get embedder arguments for the ``lcl_label`` / ``lcl_context`` embedder.
+
+    Four fields are embedded: ``month`` (integer), ``year`` (sinusoidal
+    position), ``first_day_of_week`` (integer, 0-6) and ``month_length``
+    (integer, 0-3 covering 28-31 day months).  Calendar fields are derived
+    from ``(year, month)`` by the collate function.
 
     Args:
         dim_base: Base dimension for embeddings.
         num_months: Number of month categories (default: 12).
-        num_years: Number of year categories (default: 2 for 2012-2013).
-        year_offset: Subtracted from raw year before embedding (default: 2012).
+        year_offset: Subtracted from raw year before the position embedding
+            lookup (default: 2012 → 2012-2013 map to 0-1).
 
     Returns:
         Dictionary of embedder arguments.
@@ -157,8 +162,16 @@ def get_lcl_embedder_args(
             dim_embedding=dim_base,
             dropout=0.1,
         ).to_dict(),
-        "year": IntegerEmbedderArgs(
-            num_embedding=num_years,
+        "year": PositionEmbedderArgs(
+            dim_embedding=dim_base,
+        ).to_dict(),
+        "first_day_of_week": IntegerEmbedderArgs(
+            num_embedding=7,
+            dim_embedding=dim_base,
+            dropout=0.1,
+        ).to_dict(),
+        "month_length": IntegerEmbedderArgs(
+            num_embedding=4,
             dim_embedding=dim_base,
             dropout=0.1,
         ).to_dict(),
@@ -301,7 +314,7 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
     dataset_name = getattr(config.data, "dataset", "wpuq")
     if dataset_name == "lcl_electricity":
         emb_args = get_lcl_embedder_args(config.model.dim_base)
-        label_embedder_name = "lcl_month_year"
+        label_embedder_name = "lcl_label"
     else:
         emb_args = get_embedder_args(config.model.dim_base)
         label_embedder_name = "wpuq_month"
