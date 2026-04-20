@@ -32,12 +32,12 @@ prediction_type = "velocity"
 
 [model]
 model_class = "gpt2"
-dim_base = 64
+dim_base = 128
 conditioning = true
 cond_dropout = 0.1
 dropout = 0.1
 num_attn_head = 4
-dim_feedforward = 256
+dim_feedforward = 512
 num_encoder_layer = 0
 num_decoder_layer = 12
 learn_variance = false
