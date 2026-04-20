@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name="lcl-imput-0416"
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --time=02:00:00
 #SBATCH --output=slurm_%j.log
@@ -18,20 +18,6 @@ uv sync
 
 TIMEID="LCL-0416"
 CKPT="checkpoints/${TIMEID}/last.ckpt"
-
-# MCAR imputation (20% missing)
-python scripts/showcase/imputation_demo.py \
-    --checkpoint $CKPT \
-    --dataset lcl_electricity \
-    --data_root data/lcl_electricity/ \
-    --imputation_type mcar \
-    --missing_rate 0.2 \
-    --num_samples 10 \
-    --num_test_series 100 \
-    --num_steps 100 \
-    --output_dir results/imputation/${TIMEID}/mcar_20
-
-echo "**************** [${TIMEID}] MCAR imputation completed. **************************"
 
 # MNAR consecutive block imputation (20% missing)
 python scripts/showcase/imputation_demo.py \
