@@ -78,12 +78,45 @@ class TimeSeriesDataCollection(DatasetCollection):
 
         if self.dataset is not None:
             print("All processed data loaded.")
+            self._restore_transforms_from_dataset(self.dataset)
         else:
             print("Process and save data.")
             self.dataset = self.create_dataset()
             self.save_dataset(self.dataset, processed_filename)
 
         print("Dataset ready.")
+
+    def _restore_transforms_from_dataset(self, dataset: DatasetWithMetadata) -> None:
+        """Rehydrate ``_scaler`` and ``_vectorizer`` after loading a cached dataset.
+
+        ``_normalize_fn`` / ``_vectorize_fn`` only run on the create_dataset path,
+        so loading a cached ``.pt`` otherwise leaves ``profile_inverse_transform``
+        as a no-op.
+        """
+        if self.process_option["normalize"] and dataset.scaling_factor is not None:
+            method = self.process_option["normalize_method"]
+            sf = dataset.scaling_factor
+            if method == "minmax":
+                self._scaler = MinMaxScaler(min_val=sf[1], max_val=sf[0])
+            elif method == "meanstd":
+                self._scaler = MeanStdScaler(mean_val=sf[0], std_val=sf[1])
+            elif method == "constant":
+                self._scaler = ConstantScaler(scale_val=sf[0])
+            else:
+                raise ValueError(f"Invalid normalize method: {method}")
+            self.scaling_factor = sf
+
+        if self.process_option["vectorize"]:
+            style = self.process_option["style_vectorize"]
+            window_size = self.process_option["vectorize_window_size"]
+            if style in ["chronological", "chrono"]:
+                self._vectorizer = ChronoVectorize(window_size)
+            elif style == "patchify":
+                self._vectorizer = Patchify(window_size)
+            elif style == "stft":
+                raise NotImplementedError("STFT vectorize not implemented")
+            else:
+                raise ValueError(f"Invalid vectorize style: {style}")
 
     def _validate_resolution(self, resolution: str):
         """Override in subclasses to restrict valid resolutions."""
