@@ -502,10 +502,19 @@ def main():
         default=None,
         help="Path to checkpoint to resume training from",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility (sets pl.seed_everything)",
+    )
     args = parser.parse_args()
 
     # Set up PyTorch optimizations
     setup_torch_optimizations()
+
+    if args.seed is not None:
+        pl.seed_everything(args.seed, workers=True)
 
     # Load configuration
     config = ExperimentConfig.from_toml(args.config)
