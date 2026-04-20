@@ -27,7 +27,7 @@ python scripts/showcase/super_resolution_demo.py \
     --scale_factor 4 \
     --num_samples 10 \
     --num_test_series 100 \
-    --num_steps 100 \
+    --num_steps 1000 \
     --output_dir results/super_resolution/${TIMEID}/4x
 
 echo "**************** [${TIMEID}] 4x super-resolution completed. **************************"

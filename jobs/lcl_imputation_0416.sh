@@ -28,7 +28,7 @@ python scripts/showcase/imputation_demo.py \
     --missing_rate 0.2 \
     --num_samples 10 \
     --num_test_series 100 \
-    --num_steps 100 \
+    --num_steps 1000 \
     --output_dir results/imputation/${TIMEID}/mnar_20
 
 echo "**************** [${TIMEID}] MNAR imputation completed. **************************"
