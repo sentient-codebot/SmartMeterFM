@@ -154,19 +154,30 @@ def evaluate_super_resolution(
         (mse_baseline - mse_sr) / mse_baseline * 100 if mse_baseline > 0 else 0
     )
 
+    # Baseline as a 1-sample "distribution" for the same metrics
+    baseline_batch = baseline_hr.flatten().unsqueeze(0)
+    target_flat = original_hr.flatten()
+
     # CRPS (how well SR samples cover the true values)
-    crps = crps_empirical_dimwise(sr_samples, original_hr.flatten()).mean().item()
+    crps_sr = crps_empirical_dimwise(sr_samples, target_flat).mean().item()
+    crps_baseline = crps_empirical_dimwise(baseline_batch, target_flat).mean().item()
 
     # Peak Load Error and Symmetric Quantile Error
-    ple = peak_load_error(sr_samples, original_hr.flatten()).item()
-    sqe = sym_quantile_error(sr_samples, original_hr.flatten(), quantile=0.99).item()
+    ple_sr = peak_load_error(sr_samples, target_flat).item()
+    ple_baseline = peak_load_error(baseline_batch, target_flat).item()
+    sqe_sr = sym_quantile_error(sr_samples, target_flat, quantile=0.99).item()
+    sqe_baseline = sym_quantile_error(baseline_batch, target_flat, quantile=0.99).item()
 
     # Autocorrelation comparison (Pearson R with shift=1)
-    source_acorr = calculate_pearsonr_per_sample(sr_samples, shift=1).mean().item()
     target_acorr = calculate_pearsonr_per_sample(
-        original_hr.flatten().unsqueeze(0), shift=1
+        target_flat.unsqueeze(0), shift=1
     ).item()
-    pearsonr_diff = abs(source_acorr - target_acorr)
+    source_acorr_sr = calculate_pearsonr_per_sample(sr_samples, shift=1).mean().item()
+    source_acorr_baseline = (
+        calculate_pearsonr_per_sample(baseline_batch, shift=1).mean().item()
+    )
+    pearsonr_diff_sr = abs(source_acorr_sr - target_acorr)
+    pearsonr_diff_baseline = abs(source_acorr_baseline - target_acorr)
 
     return {
         "mse_sr": mse_sr,
@@ -177,10 +188,14 @@ def evaluate_super_resolution(
         "rmse_baseline": rmse_baseline,
         "uncertainty": uncertainty,
         "improvement_mse_pct": improvement_mse,
-        "crps": crps,
-        "peak_load_error": ple,
-        "sym_quantile_error_99": sqe,
-        "pearsonr_diff": pearsonr_diff,
+        "crps_sr": crps_sr,
+        "crps_baseline": crps_baseline,
+        "peak_load_error_sr": ple_sr,
+        "peak_load_error_baseline": ple_baseline,
+        "sym_quantile_error_99_sr": sqe_sr,
+        "sym_quantile_error_99_baseline": sqe_baseline,
+        "pearsonr_diff_sr": pearsonr_diff_sr,
+        "pearsonr_diff_baseline": pearsonr_diff_baseline,
     }
 
 
@@ -463,10 +478,14 @@ def main():
             "rmse_baseline",
             "uncertainty",
             "improvement_mse_pct",
-            "crps",
-            "peak_load_error",
-            "sym_quantile_error_99",
-            "pearsonr_diff",
+            "crps_sr",
+            "crps_baseline",
+            "peak_load_error_sr",
+            "peak_load_error_baseline",
+            "sym_quantile_error_99_sr",
+            "sym_quantile_error_99_baseline",
+            "pearsonr_diff_sr",
+            "pearsonr_diff_baseline",
         ]
     }
 
@@ -517,10 +536,23 @@ def main():
     print(f"Uncertainty: {avg_metrics['uncertainty']:.6f}")
     print(f"Improvement over baseline: {avg_metrics['improvement_mse_pct']:.1f}% (MSE)")
     print("-" * 60)
-    print(f"CRPS:                 {avg_metrics['crps']:.6f}")
-    print(f"PeakLoadError:        {avg_metrics['peak_load_error']:.6f}")
-    print(f"SymQuantileErr_99:    {avg_metrics['sym_quantile_error_99']:.6f}")
-    print(f"PearsonR Diff:        {avg_metrics['pearsonr_diff']:.6f}")
+    print(f"{'Metric':<25} {'Flow SR':<15} {'Baseline':<15}")
+    print("-" * 60)
+    print(
+        f"{'CRPS':<25} {avg_metrics['crps_sr']:<15.6f} {avg_metrics['crps_baseline']:<15.6f}"
+    )
+    print(
+        f"{'PeakLoadError':<25} {avg_metrics['peak_load_error_sr']:<15.6f} "
+        f"{avg_metrics['peak_load_error_baseline']:<15.6f}"
+    )
+    print(
+        f"{'SymQuantileErr_99':<25} {avg_metrics['sym_quantile_error_99_sr']:<15.6f} "
+        f"{avg_metrics['sym_quantile_error_99_baseline']:<15.6f}"
+    )
+    print(
+        f"{'PearsonR Diff':<25} {avg_metrics['pearsonr_diff_sr']:<15.6f} "
+        f"{avg_metrics['pearsonr_diff_baseline']:<15.6f}"
+    )
     print("=" * 60)
     print(f"\nResults saved to {results_path}")
     print(f"Metrics saved to {json_path}")
