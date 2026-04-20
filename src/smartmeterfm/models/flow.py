@@ -19,7 +19,7 @@ from .measurement import LinearOperator, Noise, NonLinearOperator
 from .nn_components import DenoisingTransformer, get_start_pos
 
 
-class PredictionType(enum.strEnum):
+class PredictionType(enum.StrEnum):
     VELOCITY = "velocity"
     X0 = "x0"
     X1 = "x1"
@@ -107,7 +107,7 @@ class PositionAlignmentModelWrapper(ModelWrapper):
         )
 
 
-class PosteriorMethod(enum.strEnum):
+class PosteriorMethod(enum.StrEnum):
     DPS = "dps"
     PROJECT = "project"
     GRADIENT_DESCENT = "gd"
