@@ -205,8 +205,8 @@ def plot_sr_example(
     baseline_real: torch.Tensor,
     output_path: str,
     title: str = "Super-Resolution Example",
-    ymin: float = -0.5,
-    ymax: float = 0.5,
+    ymin: float = -0.25,
+    ymax: float = 0.25,
 ):
     """Plot a single super-resolution example with original, SR, and baseline.
 

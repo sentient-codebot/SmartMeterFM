@@ -30,6 +30,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from einops import rearrange
 from tqdm import tqdm
@@ -39,6 +40,7 @@ from smartmeterfm.data_modules.heat_pump import WPuQ
 from smartmeterfm.data_modules.lcl_electricity import LCLElectricity
 from smartmeterfm.data_modules.wpuq_household import WPuQHousehold
 from smartmeterfm.interfaces.smartmeter import SmartMeterFMModel
+from smartmeterfm.models.baselines.interpolation import InterpolationBaseline
 from smartmeterfm.utils.configuration import DataConfig
 from smartmeterfm.utils.eval import (
     calculate_pearsonr_per_sample,
@@ -127,16 +129,19 @@ def evaluate_imputation(
     original: torch.Tensor,
     imputed: torch.Tensor,
     mask: torch.Tensor,
+    baseline: torch.Tensor,
 ) -> dict:
-    """Evaluate imputation quality.
+    """Evaluate imputation quality against a linear-interpolation baseline.
 
     Args:
         original: Original complete time series.
         imputed: Imputed samples [num_samples, *shape].
         mask: Binary mask (1 = observed, 0 = missing).
+        baseline: Linear-interpolation imputation, same shape as original.
 
     Returns:
-        Dictionary of evaluation metrics.
+        Dictionary of evaluation metrics. Flow-model metrics are unsuffixed;
+        baseline counterparts carry the ``_baseline`` suffix.
     """
     # Get missing positions
     missing_mask = (1 - mask).bool()
@@ -145,13 +150,24 @@ def evaluate_imputation(
     mean_imputed = imputed.mean(dim=0)
 
     # Extract values at missing positions
-    original_missing = original.flatten()[missing_mask.flatten()]
-    mean_imputed_missing = mean_imputed.flatten()[missing_mask.flatten()]
+    original_flat = original.flatten()
+    missing_flat = missing_mask.flatten()
+    original_missing = original_flat[missing_flat]
+    mean_imputed_missing = mean_imputed.flatten()[missing_flat]
+    baseline_missing = baseline.flatten()[missing_flat]
 
-    # Calculate metrics
+    # Flow metrics at missing positions
     mse = ((original_missing - mean_imputed_missing) ** 2).mean().item()
     mae = (original_missing - mean_imputed_missing).abs().mean().item()
     rmse = mse**0.5
+
+    # Baseline metrics at missing positions
+    mse_baseline = ((original_missing - baseline_missing) ** 2).mean().item()
+    mae_baseline = (original_missing - baseline_missing).abs().mean().item()
+    rmse_baseline = mse_baseline**0.5
+    improvement_mse_pct = (
+        (mse_baseline - mse) / mse_baseline * 100 if mse_baseline > 0 else 0.0
+    )
 
     # Uncertainty (std of imputed values at missing positions)
     imputed_at_missing = imputed[:, missing_mask.expand_as(imputed[0])].view(
@@ -159,33 +175,122 @@ def evaluate_imputation(
     )
     uncertainty = imputed_at_missing.std(dim=0).mean().item()
 
-    # CRPS at missing positions
-    crps_per_dim = crps_empirical_dimwise(imputed, original.flatten())
-    crps_missing = crps_per_dim[missing_mask.flatten()].mean().item()
+    # CRPS at missing positions (baseline treated as 1-sample distribution)
+    baseline_batch = baseline.flatten().unsqueeze(0)
+    crps_per_dim = crps_empirical_dimwise(imputed, original_flat)
+    crps_missing = crps_per_dim[missing_flat].mean().item()
+    crps_baseline_per_dim = crps_empirical_dimwise(baseline_batch, original_flat)
+    crps_baseline = crps_baseline_per_dim[missing_flat].mean().item()
 
     # Peak Load Error and Symmetric Quantile Error (full sequence)
-    ple = peak_load_error(imputed, original.flatten()).item()
-    sqe = sym_quantile_error(imputed, original.flatten(), quantile=0.99).item()
+    ple = peak_load_error(imputed, original_flat).item()
+    sqe = sym_quantile_error(imputed, original_flat, quantile=0.99).item()
+    ple_baseline = peak_load_error(baseline_batch, original_flat).item()
+    sqe_baseline = sym_quantile_error(
+        baseline_batch, original_flat, quantile=0.99
+    ).item()
 
     # Autocorrelation comparison (Pearson R with shift=1)
     source_acorr = calculate_pearsonr_per_sample(imputed, shift=1).mean().item()
     target_acorr = calculate_pearsonr_per_sample(
-        original.flatten().unsqueeze(0), shift=1
+        original_flat.unsqueeze(0), shift=1
     ).item()
+    source_acorr_baseline = (
+        calculate_pearsonr_per_sample(baseline_batch, shift=1).mean().item()
+    )
     pearsonr_diff = abs(source_acorr - target_acorr)
+    pearsonr_diff_baseline = abs(source_acorr_baseline - target_acorr)
 
     return {
         "mse": mse,
         "mae": mae,
         "rmse": rmse,
+        "mse_baseline": mse_baseline,
+        "mae_baseline": mae_baseline,
+        "rmse_baseline": rmse_baseline,
+        "improvement_mse_pct": improvement_mse_pct,
         "uncertainty": uncertainty,
         "crps": crps_missing,
+        "crps_baseline": crps_baseline,
         "peak_load_error": ple,
+        "peak_load_error_baseline": ple_baseline,
         "sym_quantile_error_99": sqe,
+        "sym_quantile_error_99_baseline": sqe_baseline,
         "pearsonr_diff": pearsonr_diff,
+        "pearsonr_diff_baseline": pearsonr_diff_baseline,
         "num_missing": missing_mask.sum().item(),
         "missing_rate_actual": missing_mask.float().mean().item(),
     }
+
+
+# hard copied from sr demo
+def plot_imp_example(
+    original_real: torch.Tensor,
+    imputed_samples_real: torch.Tensor,
+    baseline_real: torch.Tensor,
+    output_path: str,
+    title: str = "Imputation Example",
+    ymin: float = -0.25,
+    ymax: float = 0.25,
+):
+    """Plot a single imputation example with original, imputed, and baseline.
+
+    Args:
+        original_real: Original HR time series [seq_length].
+        imputed_samples_real: Imputed samples [num_samples, seq_length].
+        baseline_real: Baseline (linear interp) HR series [seq_length].
+        output_path: Path to save the figure.
+        title: Figure title.
+    """
+    with plt.style.context("smartmeterfm.utils.article_compatible"):
+        fig, ax = plt.subplots(figsize=(12, 4))
+
+        t = np.arange(original_real.shape[0])
+        imputed_mean = imputed_samples_real.mean(dim=0).numpy()
+        imputed_std = imputed_samples_real.std(dim=0).numpy()
+
+        ax.plot(
+            t,
+            original_real.numpy(),
+            label="Original HR",
+            color="tab:blue",
+            linewidth=1.5,
+        )
+        ax.plot(
+            t,
+            imputed_mean,
+            label="Imputed Mean",
+            color="tab:orange",
+            linewidth=1.5,
+        )
+        ax.fill_between(
+            t,
+            imputed_mean - imputed_std,
+            imputed_mean + imputed_std,
+            color="tab:orange",
+            alpha=0.2,
+            label="Imputed \u00b11\u03c3",
+        )
+        ax.plot(
+            t,
+            baseline_real.numpy(),
+            label="Baseline (linear)",
+            color="tab:green",
+            linewidth=1.0,
+            linestyle="--",
+        )
+
+        ax.set_xlabel("Time Step [-]")
+        ax.set_ylabel("Normalized Power [-]")
+        ax.set_xlim(0, len(t) - 1)
+        ax.set_ylim(ymin, ymax)
+        ax.set_title(title)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
 
 def main():
@@ -339,6 +444,7 @@ def main():
     figures_dir = os.path.join(args.output_dir, "figures")
     os.makedirs(figures_dir, exist_ok=True)
     example_indices = set(range(min(args.num_example_figures, len(test_profiles))))
+    interp_baseline = InterpolationBaseline(method="linear")
 
     for idx in tqdm(range(len(test_profiles)), desc="Imputing"):
         original_patched = test_profiles[idx]  # [num_patches, patch_size]
@@ -361,6 +467,9 @@ def main():
                 seed=args.seed + idx,
             )
 
+        # Linear-interpolation baseline over observed positions
+        baseline_real = interp_baseline.impute(original_real, mask)
+
         # Build condition via the typed condition class; calendar fields
         # (first_day_of_week, month_length) are auto-derived when year is set.
         CondClass = _CONDITION_CLASS[args.dataset]
@@ -380,7 +489,7 @@ def main():
         ).cpu()
 
         # Evaluate in real temporal space
-        metrics = evaluate_imputation(original_real, imputed_real, mask)
+        metrics = evaluate_imputation(original_real, imputed_real, mask, baseline_real)
         metrics["sample_idx"] = idx
         metrics["month"] = month
         all_metrics.append(metrics)
@@ -400,24 +509,47 @@ def main():
                 ),
                 mask=mask,
                 overlap_generated_label="Imputed Samples",
-                ymin=-0.5,
-                ymax=0.5,
+                ymin=-0.25,
+                ymax=0.25,
             )
             plt.close(fig)
+            plot_imp_example(
+                original_real=original_real,
+                imputed_samples_real=imputed_real,
+                baseline_real=baseline_real,
+                output_path=os.path.join(
+                    figures_dir, f"imputation_example_advanced_{idx:03d}.png"
+                ),
+                title=(
+                    f"Imputation Example {idx} "
+                    f"(month={month}, {args.imputation_type}, "
+                    f"missing={args.missing_rate:.0%})"
+                ),
+                ymin=-0.25,
+                ymax=0.25,
+            )
 
     # Aggregate results
     avg_metrics = {
-        "mse": sum(m["mse"] for m in all_metrics) / len(all_metrics),
-        "mae": sum(m["mae"] for m in all_metrics) / len(all_metrics),
-        "rmse": sum(m["rmse"] for m in all_metrics) / len(all_metrics),
-        "uncertainty": sum(m["uncertainty"] for m in all_metrics) / len(all_metrics),
-        "crps": sum(m["crps"] for m in all_metrics) / len(all_metrics),
-        "peak_load_error": sum(m["peak_load_error"] for m in all_metrics)
-        / len(all_metrics),
-        "sym_quantile_error_99": sum(m["sym_quantile_error_99"] for m in all_metrics)
-        / len(all_metrics),
-        "pearsonr_diff": sum(m["pearsonr_diff"] for m in all_metrics)
-        / len(all_metrics),
+        key: sum(m[key] for m in all_metrics) / len(all_metrics)
+        for key in [
+            "mse",
+            "mae",
+            "rmse",
+            "mse_baseline",
+            "mae_baseline",
+            "rmse_baseline",
+            "improvement_mse_pct",
+            "uncertainty",
+            "crps",
+            "crps_baseline",
+            "peak_load_error",
+            "peak_load_error_baseline",
+            "sym_quantile_error_99",
+            "sym_quantile_error_99_baseline",
+            "pearsonr_diff",
+            "pearsonr_diff_baseline",
+        ]
     }
 
     # Save results
@@ -446,23 +578,44 @@ def main():
         )
 
     # Print summary
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print("Imputation Results Summary")
-    print("=" * 50)
+    print("=" * 60)
     print(f"Imputation type: {args.imputation_type}")
     print(f"Missing rate: {args.missing_rate:.1%}")
     print(f"Number of test series: {len(test_profiles)}")
     print(f"Samples per series: {args.num_samples}")
-    print("-" * 50)
-    print(f"Average MSE:                {avg_metrics['mse']:.6f}")
-    print(f"Average MAE:                {avg_metrics['mae']:.6f}")
-    print(f"Average RMSE:               {avg_metrics['rmse']:.6f}")
-    print(f"Average Uncertainty:        {avg_metrics['uncertainty']:.6f}")
-    print(f"Average CRPS:               {avg_metrics['crps']:.6f}")
-    print(f"Average PeakLoadError:      {avg_metrics['peak_load_error']:.6f}")
-    print(f"Average SymQuantileErr_99:  {avg_metrics['sym_quantile_error_99']:.6f}")
-    print(f"Average PearsonR Diff:      {avg_metrics['pearsonr_diff']:.6f}")
-    print("=" * 50)
+    print("-" * 60)
+    print(f"{'Metric':<25} {'Flow Imp':<15} {'Baseline':<15}")
+    print("-" * 60)
+    print(
+        f"{'MSE':<25} {avg_metrics['mse']:<15.6f} {avg_metrics['mse_baseline']:<15.6f}"
+    )
+    print(
+        f"{'MAE':<25} {avg_metrics['mae']:<15.6f} {avg_metrics['mae_baseline']:<15.6f}"
+    )
+    print(
+        f"{'RMSE':<25} {avg_metrics['rmse']:<15.6f} {avg_metrics['rmse_baseline']:<15.6f}"
+    )
+    print(
+        f"{'CRPS':<25} {avg_metrics['crps']:<15.6f} {avg_metrics['crps_baseline']:<15.6f}"
+    )
+    print(
+        f"{'PeakLoadError':<25} {avg_metrics['peak_load_error']:<15.6f} "
+        f"{avg_metrics['peak_load_error_baseline']:<15.6f}"
+    )
+    print(
+        f"{'SymQuantileErr_99':<25} {avg_metrics['sym_quantile_error_99']:<15.6f} "
+        f"{avg_metrics['sym_quantile_error_99_baseline']:<15.6f}"
+    )
+    print(
+        f"{'PearsonR Diff':<25} {avg_metrics['pearsonr_diff']:<15.6f} "
+        f"{avg_metrics['pearsonr_diff_baseline']:<15.6f}"
+    )
+    print("-" * 60)
+    print(f"Uncertainty: {avg_metrics['uncertainty']:.6f}")
+    print(f"Improvement over baseline: {avg_metrics['improvement_mse_pct']:.1f}% (MSE)")
+    print("=" * 60)
     print(f"\nResults saved to {results_path}")
     print(f"Metrics saved to {json_path}")
     print(f"Example figures saved to {figures_dir}")
