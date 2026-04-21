@@ -111,6 +111,24 @@ class TrainConfig(BaseConfig):
     sample_months: list[int] = field(
         default_factory=lambda: [0, 5, 11]
     )  # Jan, Jun, Dec
+    reflow_mode: bool = False
+    reflow_pairs_path: str | None = None
+
+
+@dataclass
+class ReflowConfig(BaseConfig):
+    """Parameters for rectified-flow / reflow distillation.
+
+    Present only in reflow configs; absent blocks leave ExperimentConfig.reflow=None.
+    """
+
+    teacher_checkpoint: str
+    num_pairs: int = 100_000
+    pair_batch_size: int = 256
+    teacher_num_step: int = 200
+    cfg_scale: float = 1.0
+    use_ema_teacher: bool = True
+    pairs_dtype: str = "fp32"  # "fp32" | "bf16"
 
 
 @dataclass
@@ -128,6 +146,7 @@ class ExperimentConfig(BaseConfig):
     wandb_project: str | None = None
     mlflow_tracking_uri: str | None = None
     mlflow_run_id: str | None = None
+    reflow: ReflowConfig | None = None
 
 
 @dataclass

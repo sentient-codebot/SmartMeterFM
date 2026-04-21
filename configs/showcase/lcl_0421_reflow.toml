@@ -1,0 +1,97 @@
+# Reflow distillation of the LCL-0421-01 teacher.
+# Student: identical architecture, warm-started from teacher weights,
+# trained on teacher-generated (x_0, x_1) pairs at NFE=200.
+# Goal: 100 → ~20 NFE at comparable quality on real validation data.
+#
+# Deltas vs lcl_0421_01.toml:
+#   - [reflow] block added (teacher checkpoint, pair-gen settings)
+#   - train.reflow_mode = true; train.reflow_pairs_path set
+#   - train.warmup_steps 2000 → 1000 (warm-started from teacher)
+#   - train.num_train_step 50000 → 30000 (reflow converges faster)
+#   - val_sample_config.num_sampling_step 50 → 20 (probe NFE target)
+
+exp_id = "showcase_lcl_electricity_reflow"
+log_wandb = true
+log_mlflow = false
+
+[reflow]
+# Prefer the teacher's best-val checkpoint when available.
+teacher_checkpoint = "checkpoints/LCL-0421-01/last.ckpt"
+num_pairs = 100000
+pair_batch_size = 256
+teacher_num_step = 200
+cfg_scale = 1.0
+use_ema_teacher = true
+pairs_dtype = "fp32"
+
+[data]
+dataset = "lcl_electricity"
+root = "data/lcl_electricity/"
+load = true
+normalize = true
+normalize_method = "constant"
+pit = false
+resolution = "30min"
+segment_type = "monthly"
+shuffle = true
+vectorize = true
+style_vectorize = "patchify"
+vectorize_window_size = 16
+target_labels = ["month", "year"]
+train_season = "whole_year"
+val_season = "whole_year"
+
+[flow]
+prediction_type = "velocity"
+
+[model]
+model_class = "gpt2"
+dim_base = 256
+conditioning = true
+cond_dropout = 0.1          # keep for optionality; CFG is frozen at 1.0 though
+dropout = 0.1
+num_attn_head = 4
+dim_feedforward = 1024
+num_encoder_layer = 0
+num_decoder_layer = 12
+learn_variance = false
+num_in_channel = 16
+seq_length = 93
+freeze_layers = false
+resume = false
+
+[sample]
+num_sample = 100
+val_batch_size = 64
+num_sampling_step = 100
+method = "euler"
+cfg_scale = 1.0
+
+[train]
+batch_size = 256
+lr = 0.0001
+adam_betas = [0.9, 0.95]
+weight_decay = 0.05
+warmup_steps = 1000
+lr_schedule = "cosine"
+time_sampling = "logit_normal"
+logit_normal_mean = 0.0
+logit_normal_std = 1.0
+gradient_accumulate_every = 1
+ema_update_every = 5
+ema_decay = 0.99995
+amp = true
+mixed_precision_type = "bf16"
+split_batches = true
+num_train_step = 30000
+save_and_sample_every = 5000
+val_every = 1000
+val_batch_size = 64
+reflow_mode = true
+reflow_pairs_path = "data/reflow_pairs/lcl_0421_01_200nfe.pt"
+
+[train.val_sample_config]
+num_sample = 256
+val_batch_size = 64
+num_sampling_step = 20
+cfg_scale = 1.0

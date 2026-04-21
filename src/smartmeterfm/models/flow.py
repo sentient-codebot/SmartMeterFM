@@ -655,7 +655,13 @@ class FlowModelPL(pl.LightningModule):
         batch_idx: int,
     ):
         self.train()
-        profile, condition = batch
+        if self.train_config.reflow_mode:
+            # Reflow: deterministic (x_0, x_1_teacher) pairs cached on disk.
+            # x_0 is already zero-padded at pair-gen time so no re-padding here.
+            x_0, profile, condition = batch
+        else:
+            profile, condition = batch
+            x_0 = None  # sampled below after we know the shape / padding
         if self.train_config.time_sampling == "logit_normal":
             u = (
                 torch.randn(profile.shape[0], device=profile.device)
@@ -665,16 +671,19 @@ class FlowModelPL(pl.LightningModule):
             t = torch.sigmoid(u)
         else:
             t = torch.rand(profile.shape[0], device=profile.device)  # t in [0, 1]
-        x_0 = torch.randn_like(profile)
 
-        # compute valid_length early so we can zero padded positions in x_0
+        # compute valid_length (needed for loss mask regardless of mode)
         if self.create_mask:
             valid_length = self._convert_offset_month_length(
                 condition["month_length"], 28, self.steps_per_day
             ).squeeze(1)
-            x_0 = self._zero_padding(x_0, valid_length)
         else:
             valid_length = None
+
+        if not self.train_config.reflow_mode:
+            x_0 = torch.randn_like(profile)
+            if valid_length is not None:
+                x_0 = self._zero_padding(x_0, valid_length)
 
         sample = self.path.sample(x_0=x_0, t=t, x_1=profile)
         target = {
