@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name="lcl-flow-0421-01"
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm_%j.log
