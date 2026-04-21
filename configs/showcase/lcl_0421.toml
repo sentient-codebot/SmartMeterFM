@@ -6,6 +6,10 @@
 # Monthly segments padded to 31 days: 31 × 48 = 1488 timesteps
 # After patchify(16): seq_length = 93, num_in_channel = 16
 
+# Deltas vs lcl_electricity_flow_monthly.toml:
+#   - model.dim_base 128 -> 256
+#   - model.dim_feedforward 512 -> 1024
+
 exp_id = "showcase_lcl_electricity_flow_monthly"
 log_wandb = true
 log_mlflow = false
