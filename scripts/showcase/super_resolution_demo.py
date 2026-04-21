@@ -357,6 +357,10 @@ def main():
     print(f"\nLoading model from {args.checkpoint}...")
     model = SmartMeterFMModel.from_checkpoint(args.checkpoint, device=args.device)
 
+    use_bf16 = model.device.type == "cuda"
+    if use_bf16:
+        model.pl_model.ema.ema_model = torch.compile(model.pl_model.ema.ema_model)
+
     # Load test data
     dataset_name = args.dataset
     resolution_map = {
@@ -436,14 +440,20 @@ def main():
         condition = cond.to_tensor_dict(batch_size=1, device=args.device)
 
         # Super-resolve via the unified interface
-        sr_samples_real = model.super_resolve(
-            low_res_real=lr_real,
-            scale_factor=args.scale_factor,
-            condition=condition,
-            num_samples=args.num_samples,
-            num_step=args.num_steps,
-            cfg_scale=args.cfg_scale,
-        ).cpu()
+        with torch.autocast(
+            device_type=model.device.type,
+            dtype=torch.bfloat16,
+            enabled=use_bf16,
+        ):
+            sr_samples_real = model.super_resolve(
+                low_res_real=lr_real,
+                scale_factor=args.scale_factor,
+                condition=condition,
+                num_samples=args.num_samples,
+                num_step=args.num_steps,
+                cfg_scale=args.cfg_scale,
+            )
+        sr_samples_real = sr_samples_real.float().cpu()
 
         # Evaluate in real temporal space
         metrics = evaluate_super_resolution(

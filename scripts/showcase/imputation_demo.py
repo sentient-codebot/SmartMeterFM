@@ -395,6 +395,10 @@ def main():
     print(f"\nLoading model from {args.checkpoint}...")
     model = SmartMeterFMModel.from_checkpoint(args.checkpoint, device=args.device)
 
+    use_bf16 = model.device.type == "cuda"
+    if use_bf16:
+        model.pl_model.ema.ema_model = torch.compile(model.pl_model.ema.ema_model)
+
     # Load test data
     dataset_name = args.dataset
     resolution_map = {
@@ -479,14 +483,20 @@ def main():
 
         # Impute via the unified interface (uses PosteriorVelocityModelWrapper
         # in PROJECT mode + InpaintingOperator internally).
-        imputed_real = model.impute(
-            observed_real=original_real,
-            mask_real=mask,
-            condition=condition,
-            num_samples=args.num_samples,
-            num_step=args.num_steps,
-            cfg_scale=args.cfg_scale,
-        ).cpu()
+        with torch.autocast(
+            device_type=model.device.type,
+            dtype=torch.bfloat16,
+            enabled=use_bf16,
+        ):
+            imputed_real = model.impute(
+                observed_real=original_real,
+                mask_real=mask,
+                condition=condition,
+                num_samples=args.num_samples,
+                num_step=args.num_steps,
+                cfg_scale=args.cfg_scale,
+            )
+        imputed_real = imputed_real.float().cpu()
 
         # Evaluate in real temporal space
         metrics = evaluate_imputation(original_real, imputed_real, mask, baseline_real)
