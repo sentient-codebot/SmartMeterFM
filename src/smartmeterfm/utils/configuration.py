@@ -92,6 +92,12 @@ class TrainConfig(BaseConfig):
     val_sample_config: SampleConfig = field(default_factory=SampleConfig)
     lr: float = 1e-4
     adam_betas: tuple[float, float] = (0.9, 0.999)
+    weight_decay: float = 0.01  # matches PyTorch AdamW default
+    warmup_steps: int = 0
+    lr_schedule: str = "constant"  # "constant" | "cosine"
+    time_sampling: str = "uniform"  # "uniform" | "logit_normal"
+    logit_normal_mean: float = 0.0
+    logit_normal_std: float = 1.0
     gradient_accumulate_every: int = 1
     ema_update_every: int = 5
     ema_decay: float = 0.9999

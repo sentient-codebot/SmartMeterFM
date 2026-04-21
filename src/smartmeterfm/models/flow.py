@@ -1,6 +1,7 @@
 """scripts for constructing, training, and sampling from flow models."""
 
 import enum
+import math
 from collections.abc import Callable
 
 import pytorch_lightning as pl
@@ -591,8 +592,28 @@ class FlowModelPL(pl.LightningModule):
             self.model.parameters(),
             lr=self.train_config.lr,
             betas=self.train_config.adam_betas,
+            weight_decay=self.train_config.weight_decay,
         )
-        return optimizer
+        warmup = self.train_config.warmup_steps
+        total = self.train_config.num_train_step
+        schedule = self.train_config.lr_schedule
+        if warmup == 0 and schedule == "constant":
+            return optimizer
+
+        def lr_lambda(step: int) -> float:
+            if warmup > 0 and step < warmup:
+                return step / max(1, warmup)
+            if schedule == "cosine":
+                progress = (step - warmup) / max(1, total - warmup)
+                progress = min(max(progress, 0.0), 1.0)
+                return 0.5 * (1.0 + math.cos(math.pi * progress))
+            return 1.0
+
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": lr_scheduler, "interval": "step"},
+        }
 
     @staticmethod
     def _convert_offset_month_length(
@@ -635,7 +656,15 @@ class FlowModelPL(pl.LightningModule):
     ):
         self.train()
         profile, condition = batch
-        t = torch.rand(profile.shape[0]).to(profile.device)  # t in [0, 1]
+        if self.train_config.time_sampling == "logit_normal":
+            u = (
+                torch.randn(profile.shape[0], device=profile.device)
+                * self.train_config.logit_normal_std
+                + self.train_config.logit_normal_mean
+            )
+            t = torch.sigmoid(u)
+        else:
+            t = torch.rand(profile.shape[0], device=profile.device)  # t in [0, 1]
         x_0 = torch.randn_like(profile)
 
         # compute valid_length early so we can zero padded positions in x_0
