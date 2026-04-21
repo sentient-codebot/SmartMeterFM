@@ -1,0 +1,89 @@
+# SmartMeterFM Showcase Configuration
+# Flow Matching model for LCL Smart Meter Electricity data — monthly segments
+#
+# Dataset: Low Carbon London (Zenodo CC-BY 4.0)
+# ~5,500 households at 30-min resolution, 2012–2013
+# Monthly segments padded to 31 days: 31 × 48 = 1488 timesteps
+# After patchify(16): seq_length = 93, num_in_channel = 16
+#
+# Deltas vs lcl_0421.toml (training recipe upgrade):
+#   - batch_size 128 → 256
+#   - adam_betas (0.9, 0.999) → (0.9, 0.95)  (SD3/DiT-style, tighter beta2 for bf16)
+#   - weight_decay 0.01 → 0.05               (was AdamW default)
+#   - warmup_steps 0 → 2000                  (linear warmup, 4% of 50k)
+#   - lr_schedule constant → cosine
+#   - time_sampling uniform → logit_normal   (SD3-style)
+
+exp_id = "showcase_lcl_electricity_flow_monthly"
+log_wandb = true
+log_mlflow = false
+
+[data]
+dataset = "lcl_electricity"
+root = "data/lcl_electricity/"
+load = true
+normalize = true
+normalize_method = "constant"  # ConstantScaler: data / max, preserves 0→0
+pit = false
+resolution = "30min"  # LCL native resolution (no upsampling supported)
+segment_type = "monthly"
+shuffle = true
+vectorize = true
+style_vectorize = "patchify"
+vectorize_window_size = 16
+target_labels = ["month", "year"]
+train_season = "whole_year"
+val_season = "whole_year"
+
+[flow]
+prediction_type = "velocity"
+
+[model]
+model_class = "gpt2"
+dim_base = 256
+conditioning = true
+cond_dropout = 0.1
+dropout = 0.1
+num_attn_head = 4
+dim_feedforward = 1024
+num_encoder_layer = 0
+num_decoder_layer = 12
+learn_variance = false
+num_in_channel = 16   # = vectorize_window_size (patch_size)
+seq_length = 93       # 1488 / 16 (31 days × 48 steps/day at 30min, patchified)
+freeze_layers = false
+resume = false
+
+[sample]
+num_sample = 100
+val_batch_size = 64
+num_sampling_step = 100
+method = "euler"
+cfg_scale = 1.0
+
+[train]
+batch_size = 256       # doubled from 128 — A100 80GB fits at seq_len=93
+lr = 0.0001
+adam_betas = [0.9, 0.95]
+weight_decay = 0.05
+warmup_steps = 2000
+lr_schedule = "cosine"
+time_sampling = "logit_normal"
+logit_normal_mean = 0.0
+logit_normal_std = 1.0
+gradient_accumulate_every = 1
+ema_update_every = 5
+ema_decay = 0.99995
+amp = true
+mixed_precision_type = "bf16"
+split_batches = true
+num_train_step = 50000
+save_and_sample_every = 10000
+val_every = 1000
+val_batch_size = 64
+
+[train.val_sample_config]
+num_sample = 256
+val_batch_size = 64
+num_sampling_step = 50
+cfg_scale = 1.0
