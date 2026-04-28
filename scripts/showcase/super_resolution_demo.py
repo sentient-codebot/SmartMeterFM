@@ -149,11 +149,6 @@ def evaluate_super_resolution(
     # Uncertainty
     uncertainty = sr_samples.std(dim=0).mean().item()
 
-    # Improvement over baseline
-    improvement_mse = (
-        (mse_baseline - mse_sr) / mse_baseline * 100 if mse_baseline > 0 else 0
-    )
-
     # Baseline as a 1-sample "distribution" for the same metrics
     baseline_batch = baseline_hr.flatten().unsqueeze(0)
     target_flat = original_hr.flatten()
@@ -187,7 +182,6 @@ def evaluate_super_resolution(
         "rmse_sr": rmse_sr,
         "rmse_baseline": rmse_baseline,
         "uncertainty": uncertainty,
-        "improvement_mse_pct": improvement_mse,
         "crps_sr": crps_sr,
         "crps_baseline": crps_baseline,
         "peak_load_error_sr": ple_sr,
@@ -323,6 +317,31 @@ def main():
         help="Classifier-free guidance scale (default: 1.0)",
     )
     parser.add_argument(
+        "--resample_steps",
+        type=int,
+        default=0,
+        help="RePaint-style inner refine iterations at t<threshold (default: 0 = off)",
+    )
+    parser.add_argument(
+        "--resample_t_threshold",
+        type=float,
+        default=0.4,
+        help="Apply resampling only at t<this (default: 0.4)",
+    )
+    parser.add_argument(
+        "--time_grid_mode",
+        type=str,
+        default="uniform",
+        choices=["uniform", "geometric"],
+        help="ODE time grid for posterior sampling (default: uniform)",
+    )
+    parser.add_argument(
+        "--time_grid_gamma",
+        type=float,
+        default=2.0,
+        help="Gamma for geometric time grid (>1 concentrates near t=0; default: 2.0)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -452,6 +471,10 @@ def main():
                 num_samples=args.num_samples,
                 num_step=args.num_steps,
                 cfg_scale=args.cfg_scale,
+                resample_steps=args.resample_steps,
+                resample_t_threshold=args.resample_t_threshold,
+                time_grid_mode=args.time_grid_mode,
+                time_grid_gamma=args.time_grid_gamma,
             )
         sr_samples_real = sr_samples_real.float().cpu()
 
@@ -487,7 +510,6 @@ def main():
             "rmse_sr",
             "rmse_baseline",
             "uncertainty",
-            "improvement_mse_pct",
             "crps_sr",
             "crps_baseline",
             "peak_load_error_sr",
@@ -544,7 +566,6 @@ def main():
     )
     print("-" * 60)
     print(f"Uncertainty: {avg_metrics['uncertainty']:.6f}")
-    print(f"Improvement over baseline: {avg_metrics['improvement_mse_pct']:.1f}% (MSE)")
     print("-" * 60)
     print(f"{'Metric':<25} {'Flow SR':<15} {'Baseline':<15}")
     print("-" * 60)

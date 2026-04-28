@@ -165,9 +165,6 @@ def evaluate_imputation(
     mse_baseline = ((original_missing - baseline_missing) ** 2).mean().item()
     mae_baseline = (original_missing - baseline_missing).abs().mean().item()
     rmse_baseline = mse_baseline**0.5
-    improvement_mse_pct = (
-        (mse_baseline - mse) / mse_baseline * 100 if mse_baseline > 0 else 0.0
-    )
 
     # Uncertainty (std of imputed values at missing positions)
     imputed_at_missing = imputed[:, missing_mask.expand_as(imputed[0])].view(
@@ -208,7 +205,6 @@ def evaluate_imputation(
         "mse_baseline": mse_baseline,
         "mae_baseline": mae_baseline,
         "rmse_baseline": rmse_baseline,
-        "improvement_mse_pct": improvement_mse_pct,
         "uncertainty": uncertainty,
         "crps": crps_missing,
         "crps_baseline": crps_baseline,
@@ -360,6 +356,31 @@ def main():
         help="Classifier-free guidance scale (default: 1.0)",
     )
     parser.add_argument(
+        "--resample_steps",
+        type=int,
+        default=0,
+        help="RePaint-style inner refine iterations at t<threshold (default: 0 = off)",
+    )
+    parser.add_argument(
+        "--resample_t_threshold",
+        type=float,
+        default=0.4,
+        help="Apply resampling only at t<this (default: 0.4)",
+    )
+    parser.add_argument(
+        "--time_grid_mode",
+        type=str,
+        default="uniform",
+        choices=["uniform", "geometric"],
+        help="ODE time grid for posterior sampling (default: uniform)",
+    )
+    parser.add_argument(
+        "--time_grid_gamma",
+        type=float,
+        default=2.0,
+        help="Gamma for geometric time grid (>1 concentrates near t=0; default: 2.0)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -495,6 +516,10 @@ def main():
                 num_samples=args.num_samples,
                 num_step=args.num_steps,
                 cfg_scale=args.cfg_scale,
+                resample_steps=args.resample_steps,
+                resample_t_threshold=args.resample_t_threshold,
+                time_grid_mode=args.time_grid_mode,
+                time_grid_gamma=args.time_grid_gamma,
             )
         imputed_real = imputed_real.float().cpu()
 
@@ -549,7 +574,6 @@ def main():
             "mse_baseline",
             "mae_baseline",
             "rmse_baseline",
-            "improvement_mse_pct",
             "uncertainty",
             "crps",
             "crps_baseline",
@@ -624,7 +648,6 @@ def main():
     )
     print("-" * 60)
     print(f"Uncertainty: {avg_metrics['uncertainty']:.6f}")
-    print(f"Improvement over baseline: {avg_metrics['improvement_mse_pct']:.1f}% (MSE)")
     print("=" * 60)
     print(f"\nResults saved to {results_path}")
     print(f"Metrics saved to {json_path}")

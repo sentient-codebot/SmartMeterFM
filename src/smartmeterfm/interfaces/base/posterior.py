@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import (
@@ -35,7 +35,7 @@ class NoiseConfig(BaseModel):
 
 
 # Operator
-class OperatorType(str, Enum):
+class OperatorType(StrEnum):
     LINEAR = "linear"
     DENOISE = "denoise"
     SUPER_RESOLUTION = "super_resolution"
@@ -125,6 +125,14 @@ class PosteriorSampleConfig(BaseModel):
     operator_config: OperatorConfig | CompositeOperatorConfig | Sequence[OperatorConfig]
     valid_length: PositiveInt | None = None
     method: Literal["dps", "project", "gd"] = "dps"
+    # RePaint-style resampling at early steps: K inner refine iterations per
+    # outer ODE step whenever t < resample_t_threshold. 0 disables.
+    resample_steps: int = 0
+    resample_t_threshold: float = 0.4
+    # Non-uniform time discretisation for posterior sampling. "geometric" with
+    # gamma>1 concentrates steps near t=0 where x̂_1 is most uncertain.
+    time_grid_mode: Literal["uniform", "geometric"] = "uniform"
+    time_grid_gamma: float = 2.0
 
     @field_validator("operator_config", mode="before")
     @classmethod

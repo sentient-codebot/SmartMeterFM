@@ -63,6 +63,25 @@ from ..base.posterior import (
 )
 
 
+def _build_time_grid(
+    n: int, mode: str, gamma: float, device: torch.device | str
+) -> Tensor:
+    """Return a strictly-increasing time grid of length ``n+1`` from 0 to 1.
+
+    ``mode="uniform"`` → linspace (reproduces ``step_size=1/n``).
+    ``mode="geometric"`` with ``gamma>1`` concentrates steps near ``t=0`` via
+    ``t = u**gamma`` where ``u`` is uniform on ``[0,1]`` — useful for
+    posterior sampling where x̂₁ is most uncertain at small ``t``. Early gaps
+    are small (many fine steps where it matters), late gaps are larger.
+    """
+    u = torch.linspace(0.0, 1.0, n + 1, device=device)
+    if mode == "uniform":
+        return u
+    if mode == "geometric":
+        return u.pow(gamma)
+    raise ValueError(f"Unknown time_grid_mode: {mode!r}")
+
+
 class SmartMeterFMModel(ModelInterface):
     """Concrete ``ModelInterface`` wrapping a ``FlowModelPL`` checkpoint."""
 
@@ -255,18 +274,82 @@ class SmartMeterFMModel(ModelInterface):
             valid_length=valid_length if self.create_mask else None,
         )
 
-        solver = ODESolver(velocity_model=v_model)
-        with torch.no_grad():
-            x_1 = solver.sample(
-                x_init=x_0,
-                method=sample_config.method.value
-                if hasattr(sample_config.method, "value")
-                else sample_config.method,
-                step_size=1.0 / sample_config.num_step,
+        # Custom posterior loop: activated when resampling or a non-uniform
+        # time grid is requested. Otherwise keep the byte-identical ODESolver
+        # path so generation and default posterior sampling are unchanged.
+        use_custom_loop = posterior_config is not None and (
+            posterior_config.resample_steps > 0
+            or posterior_config.time_grid_mode != "uniform"
+        )
+        if use_custom_loop:
+            x_1 = self._posterior_custom_sample(
+                v_model=v_model,
+                x_0=x_0,
+                num_step=sample_config.num_step,
+                posterior_cfg=posterior_config,
+                valid_length=valid_length if self.create_mask else None,
             )
+        else:
+            solver = ODESolver(velocity_model=v_model)
+            with torch.no_grad():
+                x_1 = solver.sample(
+                    x_init=x_0,
+                    method=sample_config.method.value
+                    if hasattr(sample_config.method, "value")
+                    else sample_config.method,
+                    step_size=1.0 / sample_config.num_step,
+                )
         if valid_length is not None and self.create_mask:
             x_1 = FlowModelPL._zero_padding(x_1, valid_length)
         return x_1
+
+    @torch.no_grad()
+    def _posterior_custom_sample(
+        self,
+        v_model: torch.nn.Module,
+        x_0: Tensor,
+        num_step: int,
+        posterior_cfg: PosteriorSampleConfig,
+        valid_length: Tensor | None,
+    ) -> Tensor:
+        """Euler integration for posterior sampling with optional RePaint-style
+        resampling and a non-uniform time grid.
+
+        At each outer step ``i`` with ``t = grid[i]``, ``dt = grid[i+1] - t``:
+          * If ``t < resample_t_threshold`` and ``resample_steps > 0``, run K
+            inner refine iterations:
+                v       = v_model(x, t)               # projected velocity
+                x̂₁     = x + (1 - t) * v             # CondOT denoised estimate
+                ε       ~ N(0, I)                      # fresh noise
+                x       = (1 - t) * ε + t * x̂₁      # re-noise
+                (zero-pad padded positions if create_mask)
+          * Take the outer Euler step: x ← x + dt * v_model(x, t).
+        """
+        grid = _build_time_grid(
+            num_step,
+            posterior_cfg.time_grid_mode,
+            posterior_cfg.time_grid_gamma,
+            device=x_0.device,
+        )
+        K = posterior_cfg.resample_steps
+        tau = posterior_cfg.resample_t_threshold
+        x = x_0
+        for i in range(num_step):
+            t_i = grid[i]
+            dt = (grid[i + 1] - t_i).item()
+            one_minus_t = (1.0 - t_i).item()
+            # RePaint-style inner refinement at the uncertain early regime.
+            if K > 0 and t_i.item() < tau:
+                for _ in range(K):
+                    v = v_model(x, t_i)
+                    x1_hat = x + one_minus_t * v
+                    eps = torch.randn_like(x)
+                    x = one_minus_t * eps + t_i.item() * x1_hat
+                    if valid_length is not None:
+                        x = FlowModelPL._zero_padding(x, valid_length)
+            v = v_model(x, t_i)
+            x = x + dt * v
+        return x
 
     # ------------------------------------------------------------------ #
     # Convenience wrappers                                               #
@@ -325,6 +408,10 @@ class SmartMeterFMModel(ModelInterface):
         num_samples: int = 1,
         num_step: int = 100,
         cfg_scale: float = 1.0,
+        resample_steps: int = 0,
+        resample_t_threshold: float = 0.4,
+        time_grid_mode: str = "uniform",
+        time_grid_gamma: float = 2.0,
     ) -> Tensor:
         """Impute missing values given a single real-space profile.
 
@@ -366,6 +453,10 @@ class SmartMeterFMModel(ModelInterface):
                 name="inpainting", mask=mask_batch.cpu().tolist()
             ),
             method="project",
+            resample_steps=resample_steps,
+            resample_t_threshold=resample_t_threshold,
+            time_grid_mode=time_grid_mode,
+            time_grid_gamma=time_grid_gamma,
         )
 
         expanded_condition = self._expand_condition(condition, num_samples)
@@ -387,6 +478,10 @@ class SmartMeterFMModel(ModelInterface):
         num_samples: int = 1,
         num_step: int = 100,
         cfg_scale: float = 1.0,
+        resample_steps: int = 0,
+        resample_t_threshold: float = 0.4,
+        time_grid_mode: str = "uniform",
+        time_grid_gamma: float = 2.0,
     ) -> Tensor:
         """Upsample a low-resolution profile to the model's native resolution.
 
@@ -417,6 +512,10 @@ class SmartMeterFMModel(ModelInterface):
                 name="super_resolution", scale_factor=scale_factor
             ),
             method="project",
+            resample_steps=resample_steps,
+            resample_t_threshold=resample_t_threshold,
+            time_grid_mode=time_grid_mode,
+            time_grid_gamma=time_grid_gamma,
         )
 
         expanded_condition = self._expand_condition(condition, num_samples)

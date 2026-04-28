@@ -454,12 +454,13 @@ def calculate_frechet(
     if isinstance(target, Tensor):
         target = target.float().cpu().numpy()
 
+    # Expect BLC (L = patch index outer, C = within-patch inner) so that
+    # (l c) recovers the original temporal order. BCL input would flatten
+    # into interleaved time steps and produce a meaningless FD.
     if source.ndim == 3:
-        mid_dim = source.shape[1] // 2
-        source = source[:, mid_dim, :]
+        source = rearrange(source, "b l c -> b (l c)")
     if target.ndim == 3:
-        mid_dim = target.shape[1] // 2
-        target = target[:, mid_dim, :]
+        target = rearrange(target, "b l c -> b (l c)")
 
     # cov. numerical stability enhancement with eps
     eps = 1e-6
