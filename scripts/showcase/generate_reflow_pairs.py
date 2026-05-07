@@ -116,11 +116,11 @@ def main():
         f"num_step={num_step}, cfg_scale={cfg_scale}, shape=({num_patches}, {patch_size})"
     )
 
-    # Teacher model
+    # Teacher model. bf16 autocast is applied internally around the NN
+    # forward only — the integrator and post-NN wrappers stay in fp32.
     logging.info(f"Loading teacher checkpoint: {teacher_ckpt}")
     model = SmartMeterFMModel.from_checkpoint(teacher_ckpt, device=args.device)
-    use_bf16 = model.device.type == "cuda"
-    if use_bf16 and not args.no_compile:
+    if model.use_bf16 and not args.no_compile:
         model.pl_model.ema.ema_model = torch.compile(model.pl_model.ema.ema_model)
 
     sample_cfg = InternalSampleConfig(
@@ -163,18 +163,14 @@ def main():
                 ).squeeze(1)
                 x0 = FlowModelPL._zero_padding(x0, valid_length)
 
-            # Teacher forward: integrate ODE at high NFE under bf16 autocast
-            with torch.autocast(
-                device_type=model.device.type,
-                dtype=torch.bfloat16,
-                enabled=use_bf16,
-            ):
-                x1 = model.sample(
-                    sample_config=sample_cfg,
-                    condition=condition,
-                    cfg_scale=cfg_scale,
-                    x_0=x0,
-                )
+            # Teacher forward: integrate ODE at high NFE; bf16 autocast is
+            # routed onto the NN forward only inside model.sample.
+            x1 = model.sample(
+                sample_config=sample_cfg,
+                condition=condition,
+                cfg_scale=cfg_scale,
+                x_0=x0,
+            )
             # x1 returned from model.sample is already zero-padded internally.
 
             x0_buf.append(x0.detach().to(dtype=store_dtype, device="cpu"))

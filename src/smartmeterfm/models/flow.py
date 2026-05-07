@@ -26,6 +26,55 @@ class PredictionType(enum.StrEnum):
     X1 = "x1"
 
 
+class AutocastForwardWrapper(ModelWrapper):
+    """Run the wrapped model's forward under ``torch.autocast`` and cast the
+    result back to fp32.
+
+    Use this to route bf16 (or fp16) onto the matmul-heavy NN forward only,
+    while keeping every wrapper above (path conversions, classifier-free
+    guidance, posterior projection, APG, the ODE integrator's Euler step)
+    in fp32. Apply this as the outermost of the "base" velocity model so
+    everything that consumes its output sees fp32 tensors.
+
+    Notes:
+        Pointwise ops in path conversions like ``a_t * x_t + b_t * eps``
+        auto-promote to fp32 when ``x_t`` is fp32 even under autocast, so
+        wrapping the path-conversion-augmented base model is equivalent to
+        wrapping the raw NN for these inputs. The explicit ``.float()``
+        cast on the way out is defensive — a no-op when the wrapper-internal
+        promotion already produced fp32.
+
+    Args:
+        model: The module to autocast around.
+        device_type: ``"cuda"`` or ``"cpu"`` (passed to ``torch.autocast``).
+        dtype: Target autocast dtype (``torch.bfloat16`` recommended).
+        enabled: When ``False``, this wrapper is a transparent no-op
+            (matmuls run in their native dtype).
+    """
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        *,
+        device_type: str = "cuda",
+        dtype: torch.dtype = torch.bfloat16,
+        enabled: bool = True,
+    ):
+        super().__init__(model=model)
+        self._device_type = device_type
+        self._dtype = dtype
+        self._enabled = enabled
+
+    def forward(self, x: Tensor, t: Tensor, **extras) -> Tensor:
+        with torch.autocast(
+            device_type=self._device_type,
+            dtype=self._dtype,
+            enabled=self._enabled,
+        ):
+            out = self.model(x=x, t=t, **extras)
+        return out.float()
+
+
 class X1ToVelocityModelWrapper(ModelWrapper):
     def __init__(self, denoiser: torch.nn.Module, path: AffineProbPath):
         super().__init__(model=denoiser)

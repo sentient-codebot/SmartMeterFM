@@ -9,9 +9,16 @@ the SmartMeterFM use case:
   ``operator.project`` to replace observed components in ``x_1_pred`` and
   converts back to velocity via the probability path.
 
-Wrapper composition (outermost last, matching how ``ODESolver`` sees it):
+Wrapper composition (innermost first, matching how the integrator sees it):
 
-    base velocity model  (EMA + prediction-type -> velocity)
+    DenoisingTransformer (NN)
+        |
+    AutocastForwardWrapper                   (bf16 autocast for matmuls
+                                              only — output is fp32 so all
+                                              wrappers above run in fp32)
+        |
+    [X0/X1ToVelocityModelWrapper]            (only when prediction_type
+                                              != velocity)
         |
     ConditionedVelocityModelWrapper          (classifier-free guidance)
         |
@@ -21,18 +28,21 @@ Wrapper composition (outermost last, matching how ``ODESolver`` sees it):
     PosteriorVelocityModelWrapper            (only when posterior_config is set;
                                               method = PROJECT)
         |
-    ODESolver.sample(...)
+    FMSolver.sample(...)                     (Euler integration in fp32,
+                                              with optional RePaint-style
+                                              inner resampling and
+                                              non-uniform time grid)
 """
 
 from __future__ import annotations
 
 import torch
 from einops import rearrange
-from flow_matching.solver import ODESolver
 from torch import Tensor
 
 from smartmeterfm.models import flow as flow_module
 from smartmeterfm.models.flow import (
+    AutocastForwardWrapper,
     ConditionedVelocityModelWrapper,
     FlowModelPL,
     PositionAlignmentModelWrapper,
@@ -45,6 +55,7 @@ from smartmeterfm.models.measurement import (
     get_operator,
 )
 from smartmeterfm.models.nn_components import get_start_pos
+from smartmeterfm.models.solvers import FMSolver
 from smartmeterfm.utils.configuration import (
     FMConfig,
     TrainConfig,
@@ -63,29 +74,24 @@ from ..base.posterior import (
 )
 
 
-def _build_time_grid(
-    n: int, mode: str, gamma: float, device: torch.device | str
-) -> Tensor:
-    """Return a strictly-increasing time grid of length ``n+1`` from 0 to 1.
-
-    ``mode="uniform"`` → linspace (reproduces ``step_size=1/n``).
-    ``mode="geometric"`` with ``gamma>1`` concentrates steps near ``t=0`` via
-    ``t = u**gamma`` where ``u`` is uniform on ``[0,1]`` — useful for
-    posterior sampling where x̂₁ is most uncertain at small ``t``. Early gaps
-    are small (many fine steps where it matters), late gaps are larger.
-    """
-    u = torch.linspace(0.0, 1.0, n + 1, device=device)
-    if mode == "uniform":
-        return u
-    if mode == "geometric":
-        return u.pow(gamma)
-    raise ValueError(f"Unknown time_grid_mode: {mode!r}")
-
-
 class SmartMeterFMModel(ModelInterface):
     """Concrete ``ModelInterface`` wrapping a ``FlowModelPL`` checkpoint."""
 
-    def __init__(self, model_config: ModelConfig):
+    def __init__(
+        self,
+        model_config: ModelConfig,
+        *,
+        use_bf16: bool | None = None,
+    ):
+        """
+        Args:
+            model_config: Model location and device(s).
+            use_bf16: If ``True``, route bf16 autocast onto the inner
+                NN forward only (matmuls run in bf16, ODE integrator and
+                all post-NN wrappers stay in fp32). If ``None``, defaults
+                to ``True`` on CUDA devices and ``False`` otherwise — same
+                heuristic the showcase scripts used to apply externally.
+        """
         self.model_config = model_config
         self.devices = model_config.devices
         if len(self.devices) != 1:
@@ -93,6 +99,9 @@ class SmartMeterFMModel(ModelInterface):
                 f"{type(self).__name__} is single-device; got {self.devices}"
             )
         self.device = self.devices[0]
+        self.use_bf16 = (
+            self.device.type == "cuda" if use_bf16 is None else bool(use_bf16)
+        )
 
         self.pl_model: FlowModelPL = self._load_model()
         self.path = self.pl_model.path
@@ -106,10 +115,17 @@ class SmartMeterFMModel(ModelInterface):
 
     @classmethod
     def from_checkpoint(
-        cls, checkpoint: str, device: str | torch.device = "cuda"
+        cls,
+        checkpoint: str,
+        device: str | torch.device = "cuda",
+        *,
+        use_bf16: bool | None = None,
     ) -> SmartMeterFMModel:
         """Convenience constructor for showcase scripts."""
-        return cls(ModelConfig(model_path=str(checkpoint), devices=device))
+        return cls(
+            ModelConfig(model_path=str(checkpoint), devices=device),
+            use_bf16=use_bf16,
+        )
 
     def _load_model(self) -> FlowModelPL:
         path = self.model_config.model_path
@@ -143,7 +159,17 @@ class SmartMeterFMModel(ModelInterface):
                     denoiser=inner, path=self.path
                 )
         base.eval()
-        return base.to(self.device)
+        base = base.to(self.device)
+        # Innermost-of-the-base autocast: bf16 matmuls inside the NN, fp32
+        # output downstream. Every wrapper above (CFG, position alignment,
+        # posterior projection + APG) and the integrator's Euler step then
+        # run in fp32 unconditionally.
+        return AutocastForwardWrapper(
+            base,
+            device_type=self.device.type,
+            dtype=torch.bfloat16,
+            enabled=self.use_bf16,
+        )
 
     def _wrap_conditional(
         self,
@@ -242,14 +268,15 @@ class SmartMeterFMModel(ModelInterface):
         x_0: Tensor | None = None,
         **_kwargs,
     ) -> Tensor:
-        """Run the wrapped velocity model through ``ODESolver``.
+        """Run the wrapped velocity model through ``FMSolver``.
 
         Args:
             sample_config: batch size, num_step, method, use_ema, data_shape.
             condition: dict of ``[batch_size, 1]`` conditioning tensors.
             cfg_scale: classifier-free-guidance scale (1.0 = disabled).
             posterior_config: if given, wraps with ``PosteriorVelocityModelWrapper``
-                (method=PROJECT). Requires ``measurement_y``.
+                (method=PROJECT). Requires ``measurement_y``. Drives the
+                solver's RePaint resampling and time-grid options.
             measurement_y: measurement tensor; shape depends on the operator.
             x_0: optional initial noise ``[B, num_patches, patch_size]``.
 
@@ -274,82 +301,40 @@ class SmartMeterFMModel(ModelInterface):
             valid_length=valid_length if self.create_mask else None,
         )
 
-        # Custom posterior loop: activated when resampling or a non-uniform
-        # time grid is requested. Otherwise keep the byte-identical ODESolver
-        # path so generation and default posterior sampling are unchanged.
-        use_custom_loop = posterior_config is not None and (
-            posterior_config.resample_steps > 0
-            or posterior_config.time_grid_mode != "uniform"
+        # FMSolver subsumes both the plain Euler path and the posterior
+        # RePaint+geometric-grid path. With the default
+        # (resample_steps=0, time_grid_mode="uniform") it reduces to plain
+        # Euler with step_size = 1/num_step, matching the previous
+        # ODESolver branch.
+        method = (
+            sample_config.method.value
+            if hasattr(sample_config.method, "value")
+            else sample_config.method
         )
-        if use_custom_loop:
-            x_1 = self._posterior_custom_sample(
-                v_model=v_model,
-                x_0=x_0,
-                num_step=sample_config.num_step,
-                posterior_cfg=posterior_config,
-                valid_length=valid_length if self.create_mask else None,
-            )
-        else:
-            solver = ODESolver(velocity_model=v_model)
-            with torch.no_grad():
-                x_1 = solver.sample(
-                    x_init=x_0,
-                    method=sample_config.method.value
-                    if hasattr(sample_config.method, "value")
-                    else sample_config.method,
-                    step_size=1.0 / sample_config.num_step,
-                )
+        solver = FMSolver(velocity_model=v_model)
+        x_1 = solver.sample(
+            x_init=x_0,
+            num_step=sample_config.num_step,
+            method=method,
+            time_grid_mode=(
+                posterior_config.time_grid_mode if posterior_config else "uniform"
+            ),
+            time_grid_gamma=(
+                posterior_config.time_grid_gamma if posterior_config else 2.0
+            ),
+            resample_steps=(posterior_config.resample_steps if posterior_config else 0),
+            resample_t_threshold=(
+                posterior_config.resample_t_threshold if posterior_config else 0.4
+            ),
+            valid_length=(
+                valid_length
+                if (valid_length is not None and self.create_mask)
+                else None
+            ),
+        )
         if valid_length is not None and self.create_mask:
             x_1 = FlowModelPL._zero_padding(x_1, valid_length)
         return x_1
-
-    @torch.no_grad()
-    def _posterior_custom_sample(
-        self,
-        v_model: torch.nn.Module,
-        x_0: Tensor,
-        num_step: int,
-        posterior_cfg: PosteriorSampleConfig,
-        valid_length: Tensor | None,
-    ) -> Tensor:
-        """Euler integration for posterior sampling with optional RePaint-style
-        resampling and a non-uniform time grid.
-
-        At each outer step ``i`` with ``t = grid[i]``, ``dt = grid[i+1] - t``:
-          * If ``t < resample_t_threshold`` and ``resample_steps > 0``, run K
-            inner refine iterations:
-                v       = v_model(x, t)               # projected velocity
-                x̂₁     = x + (1 - t) * v             # CondOT denoised estimate
-                ε       ~ N(0, I)                      # fresh noise
-                x       = (1 - t) * ε + t * x̂₁      # re-noise
-                (zero-pad padded positions if create_mask)
-          * Take the outer Euler step: x ← x + dt * v_model(x, t).
-        """
-        grid = _build_time_grid(
-            num_step,
-            posterior_cfg.time_grid_mode,
-            posterior_cfg.time_grid_gamma,
-            device=x_0.device,
-        )
-        K = posterior_cfg.resample_steps
-        tau = posterior_cfg.resample_t_threshold
-        x = x_0
-        for i in range(num_step):
-            t_i = grid[i]
-            dt = (grid[i + 1] - t_i).item()
-            one_minus_t = (1.0 - t_i).item()
-            # RePaint-style inner refinement at the uncertain early regime.
-            if K > 0 and t_i.item() < tau:
-                for _ in range(K):
-                    v = v_model(x, t_i)
-                    x1_hat = x + one_minus_t * v
-                    eps = torch.randn_like(x)
-                    x = one_minus_t * eps + t_i.item() * x1_hat
-                    if valid_length is not None:
-                        x = FlowModelPL._zero_padding(x, valid_length)
-            v = v_model(x, t_i)
-            x = x + dt * v
-        return x
 
     # ------------------------------------------------------------------ #
     # Convenience wrappers                                               #

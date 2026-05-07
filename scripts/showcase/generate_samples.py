@@ -62,10 +62,12 @@ def generate_flow_samples(
         Dictionary mapping month index to generated samples tensor.
     """
     print(f"Loading Flow model from {checkpoint_path}...")
+    # bf16 autocast is now handled internally (around the NN forward only;
+    # the ODE integrator and post-NN wrappers stay in fp32). Default behaviour
+    # mirrors the previous heuristic: enable bf16 on CUDA, off elsewhere.
     model = SmartMeterFMModel.from_checkpoint(checkpoint_path, device=device)
 
-    use_bf16 = model.device.type == "cuda"
-    if use_bf16:
+    if model.use_bf16:
         model.pl_model.ema.ema_model = torch.compile(model.pl_model.ema.ema_model)
 
     CondClass = _CONDITION_CLASS[dataset]
@@ -85,17 +87,12 @@ def generate_flow_samples(
             cond = CondClass(month=month, year=year)
             condition = cond.to_tensor_dict(batch_size=1, device=device)
 
-            with torch.autocast(
-                device_type=model.device.type,
-                dtype=torch.bfloat16,
-                enabled=use_bf16,
-            ):
-                x_1 = model.generate(
-                    condition=condition,
-                    batch_size=curr_batch_size,
-                    cfg_scale=cfg_scale,
-                    num_step=num_steps,
-                )
+            x_1 = model.generate(
+                condition=condition,
+                batch_size=curr_batch_size,
+                cfg_scale=cfg_scale,
+                num_step=num_steps,
+            )
             all_samples.append(x_1.float().cpu())
 
         samples_by_month[month] = torch.cat(all_samples, dim=0)
