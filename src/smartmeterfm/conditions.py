@@ -231,8 +231,12 @@ class WPuQCondition(SampleCondition):
 class LCLCondition(SampleCondition):
     """Sample condition for LCL (London) electricity data.
 
-    Currently month-only, matching the LCL data module.  Future LCL-specific
-    conditions (tariff type, Acorn group, etc.) can be added here.
+    Calendar fields (``month``, ``year``, ``first_day_of_week``,
+    ``month_length``) follow the same auto-derivation pattern as
+    :class:`WPuQCondition`.  ``tariff_type`` and ``acorn_grouped`` are
+    per-household attributes joined from ``informations_households.csv``
+    during preprocessing — see encodings in
+    :mod:`smartmeterfm.data_modules.lcl_electricity`.
 
     For monthly-segmented data, ``year`` is stored alongside ``month`` so
     that ``first_day_of_week`` and ``month_length`` can be derived via
@@ -243,6 +247,10 @@ class LCLCondition(SampleCondition):
     year: Annotated[int | None, ConditionFieldMeta()] = None
     first_day_of_week: Annotated[int | None, ConditionFieldMeta()] = None  # 0-6
     month_length: Annotated[int | None, ConditionFieldMeta()] = None  # 0-3
+    # Std=0, ToU=1
+    tariff_type: Annotated[int | None, ConditionFieldMeta()] = None
+    # Affluent=0, Comfortable=1, Adversity=2, ACORN-U (Unclassified)=3
+    acorn_grouped: Annotated[int | None, ConditionFieldMeta()] = None
 
     @model_validator(mode="after")
     def _derive_calendar_fields(self) -> LCLCondition:
@@ -266,4 +274,8 @@ class LCLCondition(SampleCondition):
             )
         if self.month_length is not None and not (0 <= self.month_length <= 3):
             raise ValueError(f"month_length must be 0-3, got {self.month_length}")
+        if self.tariff_type is not None and not (0 <= self.tariff_type <= 1):
+            raise ValueError(f"tariff_type must be 0 or 1, got {self.tariff_type}")
+        if self.acorn_grouped is not None and not (0 <= self.acorn_grouped <= 3):
+            raise ValueError(f"acorn_grouped must be 0-3, got {self.acorn_grouped}")
         return self

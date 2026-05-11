@@ -139,24 +139,34 @@ def get_lcl_embedder_args(
     dim_base: int,
     num_months: int = 12,
     year_offset: int = 2012,
+    use_tariff: bool = False,
+    use_acorn: bool = False,
 ) -> dict:
     """Get embedder arguments for the ``lcl_label`` / ``lcl_context`` embedder.
 
-    Four fields are embedded: ``month`` (integer), ``year`` (sinusoidal
-    position), ``first_day_of_week`` (integer, 0-6) and ``month_length``
-    (integer, 0-3 covering 28-31 day months).  Calendar fields are derived
-    from ``(year, month)`` by the collate function.
+    Four required fields are embedded: ``month`` (integer), ``year``
+    (sinusoidal position), ``first_day_of_week`` (integer, 0-6) and
+    ``month_length`` (integer, 0-3 covering 28-31 day months).  Calendar
+    fields are derived from ``(year, month)`` by the collate function.
+
+    Two optional per-household fields can be enabled via flags:
+
+    * ``tariff_type`` (0-1, Std/ToU)            — set ``use_tariff=True``
+    * ``acorn_grouped`` (0-3)                   — set ``use_acorn=True``
 
     Args:
         dim_base: Base dimension for embeddings.
         num_months: Number of month categories (default: 12).
         year_offset: Subtracted from raw year before the position embedding
             lookup (default: 2012 → 2012-2013 map to 0-1).
+        use_tariff: Include the ``tariff_type`` embedder (default: False —
+            preserves backward-compatible ``state_dict`` keys).
+        use_acorn: Include the ``acorn_grouped`` embedder (default: False).
 
     Returns:
         Dictionary of embedder arguments.
     """
-    return {
+    args: dict = {
         "month": IntegerEmbedderArgs(
             num_embedding=num_months,
             dim_embedding=dim_base,
@@ -177,6 +187,19 @@ def get_lcl_embedder_args(
         ).to_dict(),
         "year_offset": year_offset,
     }
+    if use_tariff:
+        args["tariff_type"] = IntegerEmbedderArgs(
+            num_embedding=2,
+            dim_embedding=dim_base,
+            dropout=0.1,
+        ).to_dict()
+    if use_acorn:
+        args["acorn_grouped"] = IntegerEmbedderArgs(
+            num_embedding=4,
+            dim_embedding=dim_base,
+            dropout=0.1,
+        ).to_dict()
+    return args
 
 
 def calculate_batch_sizes(args, config, num_gpus):
@@ -310,10 +333,18 @@ def create_flow_model(config: ExperimentConfig, sample_shape: tuple):
     config.model.seq_length = sample_shape[0]
     config.model.num_in_channel = sample_shape[1]
 
-    # Get embedder arguments — LCL uses month+year, others use month only
+    # Get embedder arguments — LCL uses month+year, others use month only.
+    # Optional LCL conditions (tariff_type, acorn_grouped) are gated on
+    # ``target_labels`` so configs that don't request them stay backward
+    # compatible (state_dict keys unchanged from pre-tariff/acorn checkpoints).
     dataset_name = getattr(config.data, "dataset", "wpuq")
     if dataset_name == "lcl_electricity":
-        emb_args = get_lcl_embedder_args(config.model.dim_base)
+        target_labels = list(getattr(config.data, "target_labels", []) or [])
+        emb_args = get_lcl_embedder_args(
+            config.model.dim_base,
+            use_tariff="tariff_type" in target_labels,
+            use_acorn="acorn_grouped" in target_labels,
+        )
         label_embedder_name = "lcl_label"
     else:
         emb_args = get_embedder_args(config.model.dim_base)

@@ -4,7 +4,11 @@ from .base import TimeSeriesDataCollection
 from .containers import DatasetWithMetadata, StaticLabelContainer
 from .data_module import TimeSeriesDataModule
 from .heat_pump import PreHeatPump, WPuQ
-from .lcl_electricity import LCLElectricity, PreLCLElectricity
+from .lcl_electricity import (
+    LCLElectricity,
+    PreLCLElectricity,
+    PreLCLElectricityCSV,
+)
 from .readers import WPuQHouseholdReader, WPuQPVReader, WPuQReader
 from .transforms import Compose, Transform
 from .wpuq_household import PreWPuQHousehold, WPuQHousehold
@@ -15,6 +19,7 @@ __all__ = [
     "PreHeatPump",
     "WPuQ",
     "PreLCLElectricity",
+    "PreLCLElectricityCSV",
     "LCLElectricity",
     "PreWPuQHousehold",
     "WPuQHousehold",
