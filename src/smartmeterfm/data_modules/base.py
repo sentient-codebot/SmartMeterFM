@@ -331,7 +331,19 @@ class TimeSeriesDataCollection(DatasetCollection):
 
     def _create_dataset_monthly(self) -> DatasetWithMetadata:
         """Shared monthly loading: load NPZs, loop task/month/npz, clean,
-        resolution-adjust per-month, pad to 31 days, build month labels."""
+        resolution-adjust per-month, pad to 31 days, build month labels.
+
+        The NPZ schema convention is:
+
+            ``"<m>"``           — data array for calendar month *m* (1-12)
+            ``"<m>_<name>"``    — optional per-row label array aligned with
+                                  ``"<m>"`` (e.g. ``"1_tariff_type"``).
+
+        Per-row labels other than ``month`` / ``year`` are autodetected from
+        the NPZ keys; when no ``"<m>_<name>"`` keys are present this method
+        produces ``{"month", "year"}`` only — matching the historical
+        behaviour bit-for-bit.
+        """
         _pool_kernel_size = self._get_pool_kernel_size()
         _max_timesteps = self._max_monthly_timesteps()
 
@@ -349,10 +361,12 @@ class TimeSeriesDataCollection(DatasetCollection):
                     )
                 )
 
-        num_sample_task = []
-        all_profile = []
-        all_label_month = []
-        all_label_year = []
+        num_sample_task: list[int] = []
+        all_profile: list[Tensor] = []
+        # Per-row label accumulator: name -> list of [N] long tensors.
+        # ``month`` and ``year`` are always derived; extra keys come from NPZ.
+        all_labels: dict[str, list[Tensor]] = {"month": [], "year": []}
+
         for task in self.record_tasks:
             _len = 0
             for month in range(1, 13):
@@ -366,15 +380,38 @@ class TimeSeriesDataCollection(DatasetCollection):
                     _profile = torch.from_numpy(
                         data.astype(np.float32)
                     )  # [N, timesteps_in_month]
-                    _month_label = torch.ones(_profile.shape[0], dtype=torch.long) * (
-                        month - 1
-                    )
-                    _year_label = torch.ones(_profile.shape[0], dtype=torch.long) * year
 
-                    # clean
+                    # Derived per-row labels.
+                    chunk_labels: dict[str, Tensor] = {
+                        "month": torch.full(
+                            (_profile.shape[0],), month - 1, dtype=torch.long
+                        ),
+                        "year": torch.full(
+                            (_profile.shape[0],), year, dtype=torch.long
+                        ),
+                    }
+
+                    # NPZ-stored per-row labels (e.g. tariff_type, acorn_grouped).
+                    prefix = f"{month}_"
+                    for npz_key in npz.files:
+                        if not npz_key.startswith(prefix):
+                            continue
+                        name = npz_key[len(prefix) :]
+                        # Skip if the suffix is itself another month digit
+                        # (would only happen if a label had a numeric name —
+                        # not a real risk, but be defensive).
+                        if name in chunk_labels:
+                            continue
+                        arr = npz[npz_key]
+                        # Accept either [N] or [N, 1]; squeeze to [N].
+                        if arr.ndim == 2 and arr.shape[1] == 1:
+                            arr = arr[:, 0]
+                        chunk_labels[name] = torch.from_numpy(arr.astype(np.int64))
+
+                    # clean (drops NaN/Inf rows)
                     _profile, indices = self.clean_dataset(_profile)
-                    _month_label = _month_label[indices]
-                    _year_label = _year_label[indices]
+                    for name, vec in list(chunk_labels.items()):
+                        chunk_labels[name] = vec[indices]
 
                     # resolution adjustment per-month (before concat,
                     # since different months have different lengths)
@@ -397,19 +434,40 @@ class TimeSeriesDataCollection(DatasetCollection):
                     _profile = rearrange(_profile, "n () l -> n l")
 
                     all_profile.append(_profile)
-                    all_label_month.append(_month_label)
-                    all_label_year.append(_year_label)
+                    for name, vec in chunk_labels.items():
+                        all_labels.setdefault(name, []).append(vec)
                     _len += len(_profile)
 
             num_sample_task.append(_len)
 
         all_profile = torch.cat(all_profile, dim=0)  # [N, seq_length]
         all_profile = rearrange(all_profile, "n l -> n () l")  # [N, 1, seq_length]
-        all_label_month = torch.cat(all_label_month, dim=0)
-        all_label_month = rearrange(all_label_month, "n -> n ()")
-        all_label_year = torch.cat(all_label_year, dim=0)
-        all_label_year = rearrange(all_label_year, "n -> n ()")
-        all_label = {"month": all_label_month, "year": all_label_year}
+        n_total = all_profile.shape[0]
+
+        # Concatenate every accumulated label and reshape to [N, 1].  Drop
+        # any label whose total length does not match the data length (this
+        # only happens when an optional label is present in some year's NPZ
+        # but missing from another's — in that case we can't safely align).
+        all_label: dict[str, Tensor] = {}
+        for name in sorted(all_labels):
+            chunks = all_labels[name]
+            if not chunks:
+                continue
+            cat = torch.cat(chunks, dim=0)
+            if cat.shape[0] != n_total:
+                # Surface the mismatch instead of silently emitting misaligned
+                # labels.  Caller should regenerate all NPZs with the same
+                # schema, or remove the optional label entirely.
+                import warnings
+
+                warnings.warn(
+                    f"Label {name!r} length {cat.shape[0]} does not match "
+                    f"data length {n_total}; dropping (likely partial-schema "
+                    f"NPZs across record_years={self.record_years}).",
+                    stacklevel=2,
+                )
+                continue
+            all_label[name] = rearrange(cat, "n -> n ()")
 
         # shared pipeline: normalize, vectorize, split, wrap
         return self._finalize_dataset(all_profile, all_label, num_sample_task)
