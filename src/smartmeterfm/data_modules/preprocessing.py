@@ -50,6 +50,7 @@ def split_and_save_npz(
     prefix: str,
     year: int,
     ratios: tuple[float, float, float] = (0.5, 0.25, 0.25),
+    labels_by_month: dict[str, dict[str, np.ndarray]] | None = None,
 ):
     """Shuffle, split into train/val/test, and save as compressed NPZ.
 
@@ -59,20 +60,51 @@ def split_and_save_npz(
         prefix: filename prefix (e.g., "wpuq", "wpuq_household", "wpuq_pv")
         year: recording year
         ratios: (train, val, test) split ratios
+        labels_by_month: optional dict mapping ``month_str -> {label_name: array}``
+            of per-row labels aligned with ``dataset_by_month[month_str]``.  When
+            provided, each label array is shuffled with the SAME permutation as
+            the data array so row alignment is preserved through the split, and
+            each split's NPZ stores label arrays under key ``"{month}_{label}"``
+            alongside the data array at key ``"{month}"``.  Defaults to ``None``
+            (no per-row labels — backward compatible with existing pipelines).
     """
     train_r, val_r, _ = ratios
-    splits = {"train": {}, "val": {}, "test": {}}
+    splits: dict[str, dict[str, np.ndarray]] = {"train": {}, "val": {}, "test": {}}
+    rng = np.random.default_rng()
 
     for month_str, data in dataset_by_month.items():
         if data is None:
             continue
-        data = shuffle_array(data.astype(np.float32))
+        data = data.astype(np.float32)
         n = len(data)
+
+        # Validate aligned labels (if any) before we shuffle so a mismatch
+        # surfaces as an AssertionError rather than corrupted alignment.
+        month_labels = (
+            labels_by_month.get(month_str, {}) if labels_by_month is not None else {}
+        )
+        for label_name, label_arr in month_labels.items():
+            assert len(label_arr) == n, (
+                f"label {label_name!r} for month {month_str!r} has length "
+                f"{len(label_arr)}, expected {n} (data length)"
+            )
+
+        # Single permutation shared across data + every label.
+        perm = rng.permutation(n)
+        data = data[perm]
+        month_labels = {name: arr[perm] for name, arr in month_labels.items()}
+
         i_train = int(n * train_r)
         i_val = int(n * (train_r + val_r))
-        splits["train"][month_str] = data[:i_train]
-        splits["val"][month_str] = data[i_train:i_val]
-        splits["test"][month_str] = data[i_val:]
+        bounds = {
+            "train": (0, i_train),
+            "val": (i_train, i_val),
+            "test": (i_val, n),
+        }
+        for task_name, (lo, hi) in bounds.items():
+            splits[task_name][month_str] = data[lo:hi]
+            for label_name, label_arr in month_labels.items():
+                splits[task_name][f"{month_str}_{label_name}"] = label_arr[lo:hi]
 
     for task_name, task_data in splits.items():
         np.savez_compressed(
